@@ -132,3 +132,43 @@ func TestUpdateSetting(t *testing.T) {
 		t.Errorf("expected global file to contain host: tcp://localhost:2375, got %s", string(content))
 	}
 }
+
+func TestValidateRuntime(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"docker", true},
+		{"kubernetes", true},
+		{"local", true},
+		{"container", true},
+		{"invalid", false},
+		{"", false},
+	}
+
+	// We can't access private validateRuntime directly if it is not exported.
+	// But UpdateSetting calls it.
+
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+	os.Setenv("HOME", tmpDir)
+
+	groveDir := filepath.Join(tmpDir, "my-grove")
+	if err := os.MkdirAll(groveDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range tests {
+		err := UpdateSetting(groveDir, "default_runtime", tt.input, false)
+		if tt.want {
+			if err != nil {
+				t.Errorf("UpdateSetting(%q) failed: %v", tt.input, err)
+			}
+		} else {
+			if err == nil {
+				t.Errorf("UpdateSetting(%q) should have failed", tt.input)
+			}
+		}
+	}
+}

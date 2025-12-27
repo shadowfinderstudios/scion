@@ -147,6 +147,9 @@ func UpdateSetting(grovePath string, key string, value string, global bool) erro
 	// Update the field
 	switch key {
 	case "default_runtime":
+		if err := validateRuntime(value); err != nil {
+			return err
+		}
 		current.DefaultRuntime = value
 	case "kubernetes.default_context":
 		current.Kubernetes.DefaultContext = value
@@ -191,4 +194,13 @@ func GetSettingsMap(s *Settings) map[string]string {
 	m["kubernetes.default_namespace"] = s.Kubernetes.DefaultNamespace
 	m["docker.host"] = s.Docker.Host
 	return m
+}
+
+func validateRuntime(r string) error {
+	switch r {
+	case "docker", "kubernetes", "local", "container":
+		return nil
+	default:
+		return fmt.Errorf("invalid runtime '%s'. Supported values: docker, kubernetes, local", r)
+	}
 }

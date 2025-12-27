@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"os/exec"
+	"runtime"
 
 	"github.com/ptone/scion-agent/pkg/config"
 )
@@ -34,6 +35,18 @@ func GetRuntime(grovePath string) Runtime {
 			if s.DefaultRuntime != "" {
 				sandbox = s.DefaultRuntime
 			}
+		}
+	}
+
+	if sandbox == "local" {
+		if runtime.GOOS == "darwin" {
+			if _, err := exec.LookPath("container"); err == nil {
+				sandbox = "container"
+			} else {
+				sandbox = "docker"
+			}
+		} else {
+			sandbox = "docker"
 		}
 	}
 
