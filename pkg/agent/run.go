@@ -88,14 +88,16 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 
 	// 3. Propagate credentials
 	var auth api.AuthConfig
-	if opts.Auth != nil {
-		auth, err = opts.Auth.GetAuthConfig(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get auth: %w", err)
+	if !opts.NoAuth {
+		if opts.Auth != nil {
+			auth, err = opts.Auth.GetAuthConfig(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get auth: %w", err)
+			}
+		} else {
+			// Fallback to legacy discovery if no provider given
+			auth = h.DiscoverAuth(agentHome)
 		}
-	} else {
-		// Fallback to legacy discovery if no provider given
-		auth = h.DiscoverAuth(agentHome)
 	}
 
 	// 4. Launch container
@@ -137,6 +139,9 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 	exists, err := m.Runtime.ImageExists(ctx, resolvedImage)
 	if err != nil || !exists {
 		if err := m.Runtime.PullImage(ctx, resolvedImage); err != nil {
+			if useTmux {
+				return nil, fmt.Errorf("tmux support requested but image '%s' not found and pull failed: %w. Please ensure the image has a :tmux tag.", resolvedImage, err)
+			}
 			return nil, fmt.Errorf("failed to pull image '%s': %w", resolvedImage, err)
 		}
 	}

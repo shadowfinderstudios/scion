@@ -105,6 +105,7 @@ type StartOptions struct {
 	Resume    bool
 	Model     string
 	Auth      AuthProvider
+	NoAuth    bool
 }
 
 type StatusEvent struct {

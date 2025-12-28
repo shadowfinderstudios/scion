@@ -45,6 +45,7 @@ func RunAgent(cmd *cobra.Command, args []string, resume bool) error {
 		Resume:    resume,
 		Model:     model,
 		Detached:  detached,
+		NoAuth:    noAuth,
 	}
 
 	// We still might want to show some progress in the CLI
