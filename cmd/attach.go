@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/ptone/scion-agent/pkg/agent"
 	"github.com/ptone/scion-agent/pkg/config"
@@ -23,11 +25,43 @@ If the agent was started with tmux support, this will attach to the tmux session
 		// Try to resolve grove info for better error messages
 		projectDir, _ := config.GetResolvedProjectDir(grovePath)
 		groveName := config.GetGroveName(projectDir)
+		targetGrovePath := grovePath
+
+		// Verify agent exists
+		found := false
+		if projectDir != "" {
+			agentDir := filepath.Join(projectDir, "agents", agentName)
+			if _, err := os.Stat(filepath.Join(agentDir, "scion-agent.json")); err == nil {
+				found = true
+			}
+		}
+
+		if !found {
+			// If user didn't specify a grove, try global fallback
+			if grovePath == "" {
+				globalDir, _ := config.GetGlobalDir()
+				if globalDir != "" && globalDir != projectDir {
+					globalAgentDir := filepath.Join(globalDir, "agents", agentName)
+					if _, err := os.Stat(filepath.Join(globalAgentDir, "scion-agent.json")); err == nil {
+						found = true
+						targetGrovePath = globalDir
+						// Update display info
+						projectDir = globalDir
+						groveName = "global"
+						fmt.Printf("Agent '%s' not found in local grove, using global agent.\n", agentName)
+					}
+				}
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("agent '%s' not found in grove '%s'", agentName, groveName)
+		}
 
 		// Load agent config to get the runtime
-		effectiveRuntime := agent.GetSavedRuntime(agentName, grovePath)
+		effectiveRuntime := agent.GetSavedRuntime(agentName, targetGrovePath)
 
-		rt := runtime.GetRuntime(grovePath, effectiveRuntime)
+		rt := runtime.GetRuntime(targetGrovePath, effectiveRuntime)
 
 		fmt.Printf("Attaching to agent '%s' (grove: %s)...\n", agentName, groveName)
 		err := rt.Attach(context.Background(), agentName)
