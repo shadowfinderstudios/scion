@@ -30,6 +30,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
     tar -C /usr/local -xzf go.tar.gz && \
     rm go.tar.gz
 
+# Download GitHub CLI keyring
+RUN mkdir -p -m 755 /etc/apt/keyrings && \
+    wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg > /etc/apt/keyrings/githubcli-archive-keyring.gpg
+
 # Install Git from source
 WORKDIR /opt
 RUN wget https://www.kernel.org/pub/software/scm/git/git-2.52.0.tar.gz
@@ -41,6 +45,9 @@ RUN make prefix=/usr/local install
 # Final Stage
 FROM ${BASE_IMAGE}
 USER root
+
+COPY --from=builder /etc/apt/keyrings/githubcli-archive-keyring.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg
+RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
 
 # Install runtime dependencies for Git and Tmux
 # git needs: libcurl4-gnutls-dev (or similar), libexpat1, zlib1g
