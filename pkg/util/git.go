@@ -81,12 +81,20 @@ func CreateWorktree(path, branch string) error {
 	// git worktree add --relative-paths -b <branch> <path>
 	cmd := exec.Command("git", "worktree", "add", "--relative-paths", "-b", branch, path)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		outputStr := string(output)
 		// If branch already exists, try to just add it
-		if strings.Contains(string(output), "already exists") {
+		if strings.Contains(outputStr, "already exists") {
 			cmd = exec.Command("git", "worktree", "add", "--relative-paths", path, branch)
-			return cmd.Run()
+			if output, err := cmd.CombinedOutput(); err != nil {
+				outputStr = string(output)
+				if strings.Contains(outputStr, "already checked out") {
+					return fmt.Errorf("branch '%s' is already checked out in another worktree", branch)
+				}
+				return fmt.Errorf("failed to create worktree: %s", strings.TrimSpace(outputStr))
+			}
+			return nil
 		}
-		return err
+		return fmt.Errorf("failed to create worktree: %s", strings.TrimSpace(outputStr))
 	}
 	return nil
 }

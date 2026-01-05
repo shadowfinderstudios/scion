@@ -33,4 +33,6 @@ func init() {
 
 	startCmd.Flags().BoolVarP(&attach, "attach", "a", false, "Attach to the agent TTY after starting")
 
+	startCmd.Flags().StringVarP(&branch, "branch", "b", "", "Git branch to use for the agent workspace")
+
 }

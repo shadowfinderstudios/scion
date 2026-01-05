@@ -99,6 +99,7 @@ type StartOptions struct {
 	Resume    bool
 	Auth      AuthProvider
 	NoAuth    bool
+	Branch    string
 }
 
 type StatusEvent struct {

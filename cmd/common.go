@@ -16,6 +16,7 @@ var (
 	agentImage   string
 	noAuth       bool
 	attach       bool
+	branch       string
 )
 
 func RunAgent(cmd *cobra.Command, args []string, resume bool) error {
@@ -74,6 +75,7 @@ func RunAgent(cmd *cobra.Command, args []string, resume bool) error {
 		Resume:    resume,
 		Detached:  detached,
 		NoAuth:    noAuth,
+		Branch:    branch,
 	}
 
 	// We still might want to show some progress in the CLI
