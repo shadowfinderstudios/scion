@@ -18,7 +18,7 @@ var cdwCmd = &cobra.Command{
 	Long: `Resolves the path to a worktree and changes into (starts a new shell in that directory).
 First checks for an agent by name and enters its workspace if found.
 Then checks for any git worktree checked out to the specified branch.`,
-	Args: cobra.ExactArgs(1),
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: getAgentNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]

@@ -13,7 +13,7 @@ import (
 var syncCmd = &cobra.Command{
 	Use:   "sync [to|from] <agent-name>",
 	Short: "Sync agent workspace",
-	Long:  `Triggers a synchronization of the workspace for the specified agent.
+	Long: `Triggers a synchronization of the workspace for the specified agent.
 Behavior depends on the configured sync mode (e.g. mutagen or tar).
 For tar sync, direction (to or from) must be specified.`,
 	Args: cobra.RangeArgs(1, 2),

@@ -56,7 +56,7 @@ var templatesShowCmd = &cobra.Command{
 		fmt.Printf("Template: %s\n", tpl.Name)
 		fmt.Printf("Path:     %s\n", tpl.Path)
 		fmt.Println("Configuration (scion-agent.json):")
-		
+
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(cfg)

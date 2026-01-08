@@ -72,7 +72,7 @@ func TestGetAgentNames(t *testing.T) {
 		assert.NotContains(t, names, "foobar")
 		assert.Len(t, names, 2)
 	})
-	
+
 	t.Run("Complete no match", func(t *testing.T) {
 		names, _ := getAgentNames(cmd, []string{}, "z")
 		assert.Len(t, names, 0)

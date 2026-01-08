@@ -15,7 +15,7 @@ var createCmd = &cobra.Command{
 	Use:   "create <agent-name>",
 	Short: "Provision a new scion agent without starting it",
 	Long: `Provision a new isolated LLM agent directory to perform a specific task.
-The agent will be created from a template.`, 
+The agent will be created from a template.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		agentName := args[0]
@@ -65,4 +65,3 @@ func init() {
 	createCmd.Flags().StringVarP(&agentImage, "image", "i", "", "Container image to use (overrides template)")
 	createCmd.Flags().StringVarP(&branch, "branch", "b", "", "Git branch to use for the agent workspace")
 }
-

@@ -14,10 +14,10 @@ var deleteStopped bool
 
 // deleteCmd represents the delete command
 var deleteCmd = &cobra.Command{
-	Use:     "delete <agent>",
-	Aliases: []string{"rm"},
-	Short:   "Delete an agent",
-	Long:    `Stop and remove an agent container and its associated files and worktree.`,
+	Use:               "delete <agent>",
+	Aliases:           []string{"rm"},
+	Short:             "Delete an agent",
+	Long:              `Stop and remove an agent container and its associated files and worktree.`,
 	ValidArgsFunction: getAgentNames,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if deleteStopped {

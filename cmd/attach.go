@@ -18,7 +18,7 @@ var attachCmd = &cobra.Command{
 	Short: "Attach to an agent's interactive session",
 	Long: `Attach to the interactive session of a running agent.
 If the agent was started with tmux support, this will attach to the tmux session.`,
-	Args: cobra.ExactArgs(1),
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: getAgentNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		agentName := args[0]
@@ -80,4 +80,3 @@ If the agent was started with tmux support, this will attach to the tmux session
 func init() {
 	rootCmd.AddCommand(attachCmd)
 }
-

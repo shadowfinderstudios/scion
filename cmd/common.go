@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/ptone/scion-agent/pkg/agent"
 	"github.com/ptone/scion-agent/pkg/api"
 	"github.com/ptone/scion-agent/pkg/runtime"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -103,4 +103,3 @@ func RunAgent(cmd *cobra.Command, args []string, resume bool) error {
 
 	return nil
 }
-

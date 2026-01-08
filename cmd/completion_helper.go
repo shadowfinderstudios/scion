@@ -47,10 +47,10 @@ func getAgentNames(cmd *cobra.Command, args []string, toComplete string) ([]stri
 	// We need to resolve the grove path. cmd.Flag("grove") might not be parsed yet during completion,
 	// so we check the flag explicitly or default logic.
 	// Cobra completion happens before full flag parsing in some cases, or we can inspect flags.
-	
+
 	// Try to get grove from flag if specified by user in the command line so far
 	currentGrovePath, _ := cmd.Flags().GetString("grove")
-	
+
 	// If global flag is set
 	global, _ := cmd.Flags().GetBool("global")
 	if global {

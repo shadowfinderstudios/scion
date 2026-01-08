@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
 
 	"github.com/ptone/scion-agent/pkg/agent"
+	"github.com/ptone/scion-agent/pkg/api"
 	"github.com/ptone/scion-agent/pkg/config"
 	"github.com/ptone/scion-agent/pkg/runtime"
 	"github.com/spf13/cobra"
@@ -45,6 +47,15 @@ var listCmd = &cobra.Command{
 			return err
 		}
 
+		if outputFormat == "json" {
+			if agents == nil {
+				agents = []api.AgentInfo{}
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(agents)
+		}
+
 		if len(agents) == 0 {
 			if listAll {
 				fmt.Println("No active agents found across any groves.")
@@ -80,4 +91,3 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().BoolVarP(&listAll, "all", "a", false, "List all agents across all groves")
 }
-
