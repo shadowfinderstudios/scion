@@ -28,7 +28,7 @@ func TestClaudeCode_GetCommand(t *testing.T) {
 
 	// 3. Resume
 	cmd = c.GetCommand("do something", true, nil)
-	expected = []string{"claude", "--no-chrome", "--dangerously-skip-permissions", "--continue"}
+	expected = []string{"claude", "--no-chrome", "--dangerously-skip-permissions", "--continue", "do something"}
 	if !reflect.DeepEqual(cmd, expected) {
 		t.Errorf("expected %v, got %v", expected, cmd)
 	}
@@ -36,6 +36,13 @@ func TestClaudeCode_GetCommand(t *testing.T) {
 	// 4. Task with baseArgs
 	cmd = c.GetCommand("do something", false, []string{"--foo", "bar"})
 	expected = []string{"claude", "--no-chrome", "--dangerously-skip-permissions", "--foo", "bar", "do something"}
+	if !reflect.DeepEqual(cmd, expected) {
+		t.Errorf("expected %v, got %v", expected, cmd)
+	}
+
+	// 5. With Model (via baseArgs)
+	cmd = c.GetCommand("do something", false, []string{"--model", "claude-3-opus"})
+	expected = []string{"claude", "--no-chrome", "--dangerously-skip-permissions", "--model", "claude-3-opus", "do something"}
 	if !reflect.DeepEqual(cmd, expected) {
 		t.Errorf("expected %v, got %v", expected, cmd)
 	}

@@ -40,6 +40,7 @@ type ScionConfig struct {
 	Volumes     []VolumeMount     `json:"volumes,omitempty"`
 	Detached    *bool             `json:"detached"`
 	CommandArgs []string          `json:"command_args,omitempty"`
+	Model       string            `json:"model,omitempty"`
 	Kubernetes  *KubernetesConfig `json:"kubernetes,omitempty"`
 	Gemini      *GeminiConfig     `json:"gemini,omitempty"`
 

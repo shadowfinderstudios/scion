@@ -272,6 +272,9 @@ func MergeScionConfig(base, override *api.ScionConfig) *api.ScionConfig {
 	if len(override.CommandArgs) > 0 {
 		result.CommandArgs = override.CommandArgs
 	}
+	if override.Model != "" {
+		result.Model = override.Model
+	}
 	if override.Kubernetes != nil {
 		if result.Kubernetes == nil {
 			result.Kubernetes = override.Kubernetes

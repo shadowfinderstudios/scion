@@ -247,6 +247,15 @@ func TestMergeScionConfig(t *testing.T) {
 		})
 	}
 
+	t.Run("model merge", func(t *testing.T) {
+		base := &api.ScionConfig{Model: "flash"}
+		override := &api.ScionConfig{Model: "pro"}
+		got := MergeScionConfig(base, override)
+		if got.Model != "pro" {
+			t.Errorf("expected model to be pro, got %v", got.Model)
+		}
+	})
+
 	t.Run("detached merge", func(t *testing.T) {
 		base := &api.ScionConfig{Detached: &trueVal}
 		override := &api.ScionConfig{Detached: &falseVal}

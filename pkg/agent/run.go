@@ -191,10 +191,15 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		UseTmux:      useTmux,
 		Task:         task,
 		CommandArgs: func() []string {
+			var args []string
 			if finalScionCfg != nil {
-				return finalScionCfg.CommandArgs
+				args = finalScionCfg.CommandArgs
+				if finalScionCfg.Model != "" {
+					// Prepend model flag so it appears before user args but is passed in baseArgs
+					args = append([]string{"--model", finalScionCfg.Model}, args...)
+				}
 			}
-			return nil
+			return args
 		}(),
 		Env:          agentEnv,
 		Volumes: func() []api.VolumeMount {
