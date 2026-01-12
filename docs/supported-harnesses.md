@@ -93,9 +93,11 @@ The following table summarizes the capabilities supported by each agent harness 
 | **Hooks** | ✅ | ✅ | ❌ | ❌ |
 | Support | ✅ | ✅ | ❌ | ❌ |
 | **OpenTelemetry** | ✅ | ✅  | ❌ | ✅  |
+| **System Prompt Override** | ✅ | ✅ | ❌ | ❌ |
 
 * **Resume with Prompt**: Ability to provide a new task/prompt when resuming an existing session.
 * **Interject** (pending feature): Key used to interrupt the agent (e.g., stop generation).
 * **Enqueue** (pending feature): Ability to send messages to the agent while it's running (requires Tmux).
 * **Hooks**: Support for lifecycle hooks (e.g., `SessionStart`, `AfterTool`).
 * **OpenTelemetry** (pending feature): Specific events vary
+* **System Prompt Override**: Support for providing a custom system prompt to the agent (e.g. via `system_prompt.md`).
