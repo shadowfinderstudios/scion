@@ -352,3 +352,7 @@ func (g *GeminiCLI) updateSelectedAuthType(settingsPath string, selectedType str
 func (g *GeminiCLI) GetEmbedDir() string {
 	return "gemini"
 }
+
+func (g *GeminiCLI) GetInterruptKey() string {
+	return "C-c"
+}

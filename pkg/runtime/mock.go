@@ -15,6 +15,7 @@ type MockRuntime struct {
 	AttachFunc      func(ctx context.Context, id string) error
 	ImageExistsFunc func(ctx context.Context, image string) (bool, error)
 	SyncFunc        func(ctx context.Context, id string, direction SyncDirection) error
+	ExecFunc        func(ctx context.Context, id string, cmd []string) (string, error)
 }
 
 func (m *MockRuntime) Name() string {
@@ -84,4 +85,11 @@ func (m *MockRuntime) Sync(ctx context.Context, id string, direction SyncDirecti
 
 	return nil
 
+}
+
+func (m *MockRuntime) Exec(ctx context.Context, id string, cmd []string) (string, error) {
+	if m.ExecFunc != nil {
+		return m.ExecFunc(ctx, id, cmd)
+	}
+	return "", nil
 }

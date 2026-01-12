@@ -171,3 +171,8 @@ func (r *AppleContainerRuntime) Sync(ctx context.Context, id string, direction S
 	return nil
 
 }
+
+func (r *AppleContainerRuntime) Exec(ctx context.Context, id string, cmd []string) (string, error) {
+	args := append([]string{"exec", id}, cmd...)
+	return runSimpleCommand(ctx, r.Command, args...)
+}

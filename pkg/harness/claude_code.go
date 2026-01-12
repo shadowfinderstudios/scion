@@ -128,3 +128,7 @@ func (c *ClaudeCode) Provision(ctx context.Context, agentName, agentHome, agentW
 func (c *ClaudeCode) GetEmbedDir() string {
 	return "claude"
 }
+
+func (c *ClaudeCode) GetInterruptKey() string {
+	return "Escape"
+}

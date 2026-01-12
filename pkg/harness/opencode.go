@@ -92,3 +92,7 @@ func (o *OpenCode) Provision(ctx context.Context, agentName, agentHome, agentWor
 func (o *OpenCode) GetEmbedDir() string {
 	return "opencode"
 }
+
+func (o *OpenCode) GetInterruptKey() string {
+	return "C-c"
+}

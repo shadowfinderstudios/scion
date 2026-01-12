@@ -90,3 +90,7 @@ func (c *Codex) Provision(ctx context.Context, agentName, agentHome, agentWorksp
 func (c *Codex) GetEmbedDir() string {
 	return "codex"
 }
+
+func (c *Codex) GetInterruptKey() string {
+	return "C-c"
+}

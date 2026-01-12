@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ptone/scion-agent/pkg/api"
+	"github.com/ptone/scion-agent/pkg/harness"
 	"github.com/ptone/scion-agent/pkg/runtime"
 )
 
@@ -24,6 +28,9 @@ type Manager interface {
 
 	// List returns active agents
 	List(ctx context.Context, filter map[string]string) ([]api.AgentInfo, error)
+
+	// Message sends a message to an agent's harness via tmux
+	Message(ctx context.Context, agentID string, message string, interrupt bool) error
 
 	// Watch returns a channel of status updates for an agent
 	Watch(ctx context.Context, agentID string) (<-chan api.StatusEvent, error)
@@ -73,4 +80,63 @@ func (m *AgentManager) Delete(ctx context.Context, agentID string, deleteFiles b
 
 func (m *AgentManager) Watch(ctx context.Context, agentID string) (<-chan api.StatusEvent, error) {
 	return nil, fmt.Errorf("Watch not implemented")
+}
+
+func (m *AgentManager) Message(ctx context.Context, agentID string, message string, interrupt bool) error {
+	// 1. Find the agent
+	agents, err := m.List(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	var agent *api.AgentInfo
+	for _, a := range agents {
+		if a.Name == agentID || a.ID == agentID || strings.TrimPrefix(a.Name, "/") == agentID {
+			agent = &a
+			break
+		}
+	}
+
+	if agent == nil {
+		return fmt.Errorf("agent '%s' not found or not running", agentID)
+	}
+
+	if agent.Labels["scion.tmux"] != "true" {
+		return fmt.Errorf("agent '%s' was not started with tmux support, cannot send message", agentID)
+	}
+
+	// 2. Resolve harness
+	harnessName := "generic"
+	if agent.GrovePath != "" {
+		scionJSON := filepath.Join(agent.GrovePath, "agents", agent.Name, "scion-agent.json")
+		if data, err := os.ReadFile(scionJSON); err == nil {
+			var cfg api.ScionConfig
+			if err := json.Unmarshal(data, &cfg); err == nil && cfg.Harness != "" {
+				harnessName = cfg.Harness
+			}
+		}
+	}
+	h := harness.New(harnessName)
+
+	// 3. Prepare commands
+	var cmds [][]string
+
+	if interrupt {
+		key := h.GetInterruptKey()
+		cmds = append(cmds, []string{"tmux", "send-keys", "-t", "scion", key})
+	}
+
+	// tmux send-keys -t scion "message" Enter
+	cmds = append(cmds, []string{"tmux", "send-keys", "-t", "scion", message, "Enter"})
+	cmds = append(cmds, []string{"tmux", "send-keys", "-t", "scion", "Enter"})
+
+	// 4. Execute
+	for _, cmd := range cmds {
+		_, err := m.Runtime.Exec(ctx, agent.ID, cmd)
+		if err != nil {
+			return fmt.Errorf("failed to send message to agent '%s': %w", agent.Name, err)
+		}
+	}
+
+	return nil
 }

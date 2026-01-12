@@ -22,4 +22,7 @@ type Harness interface {
 	// GetEmbedDir returns the name of the directory in pkg/config/embeds/
 	// that contains template files for this harness (e.g., "claude", "gemini").
 	GetEmbedDir() string
+
+	// GetInterruptKey returns the key sequence used to interrupt the harness process (e.g., "C-c" or "Escape").
+	GetInterruptKey() string
 }

@@ -137,3 +137,7 @@ func (e *ErrorRuntime) PullImage(ctx context.Context, image string) error {
 func (e *ErrorRuntime) Sync(ctx context.Context, id string, direction SyncDirection) error {
 	return e.Err
 }
+
+func (e *ErrorRuntime) Exec(ctx context.Context, id string, cmd []string) (string, error) {
+	return "", e.Err
+}

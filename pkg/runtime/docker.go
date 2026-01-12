@@ -172,3 +172,8 @@ func (r *DockerRuntime) Sync(ctx context.Context, id string, direction SyncDirec
 	return nil
 
 }
+
+func (r *DockerRuntime) Exec(ctx context.Context, id string, cmd []string) (string, error) {
+	args := append([]string{"exec", id}, cmd...)
+	return runSimpleCommand(ctx, r.Command, args...)
+}

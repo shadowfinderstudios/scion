@@ -813,3 +813,45 @@ func (r *KubernetesRuntime) Sync(ctx context.Context, id string, direction SyncD
 	fmt.Printf("Syncing workspace (%s -> agent)...\n", workspacePath)
 	return r.syncToPod(ctx, namespace, agent.ID, workspacePath, "/workspace")
 }
+
+func (r *KubernetesRuntime) Exec(ctx context.Context, id string, cmd []string) (string, error) {
+	namespace := r.DefaultNamespace
+	podName := id
+
+	req := r.Client.Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec")
+
+	option := &corev1.PodExecOptions{
+		Container: "agent",
+		Command:   cmd,
+		Stdin:     false,
+		Stdout:    true,
+		Stderr:    true,
+		TTY:       false,
+	}
+
+	req.VersionedParams(
+		option,
+		scheme.ParameterCodec,
+	)
+
+	executor, err := remotecommand.NewSPDYExecutor(r.Client.Config, "POST", req.URL())
+	if err != nil {
+		return "", err
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+
+	if err != nil {
+		return stdout.String(), fmt.Errorf("exec failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	return stdout.String(), nil
+}
