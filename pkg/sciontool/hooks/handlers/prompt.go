@@ -28,7 +28,7 @@ type PromptHandler struct {
 func NewPromptHandler() *PromptHandler {
 	home := os.Getenv("HOME")
 	if home == "" {
-		home = "/home/node"
+		home = "/home/scion"
 	}
 	return &PromptHandler{
 		PromptPath: filepath.Join(home, "prompt.md"),

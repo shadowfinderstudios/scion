@@ -34,7 +34,7 @@ type AgentInfo struct {
 func NewStatusHandler() *StatusHandler {
 	home := os.Getenv("HOME")
 	if home == "" {
-		home = "/home/node"
+		home = "/home/scion"
 	}
 	return &StatusHandler{
 		StatusPath: filepath.Join(home, "agent-info.json"),

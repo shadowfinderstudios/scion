@@ -27,7 +27,7 @@ type LoggingHandler struct {
 func NewLoggingHandler() *LoggingHandler {
 	home := os.Getenv("HOME")
 	if home == "" {
-		home = "/home/node"
+		home = "/home/scion"
 	}
 	return &LoggingHandler{
 		LogPath: filepath.Join(home, "agent.log"),
