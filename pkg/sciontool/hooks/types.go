@@ -68,6 +68,7 @@ const (
 	// Scion lifecycle events (internal)
 	EventPreStart  = "pre-start"
 	EventPostStart = "post-start"
+	EventPreStop   = "pre-stop"
 
 	// LLM model events
 	EventModelStart = "model-start"
@@ -81,10 +82,12 @@ type AgentState string
 const (
 	StateIdle            AgentState = "IDLE"
 	StateStarting        AgentState = "STARTING"
+	StateInitializing    AgentState = "INITIALIZING"
 	StateThinking        AgentState = "THINKING"
 	StateExecuting       AgentState = "EXECUTING"
 	StateWaitingForInput AgentState = "WAITING_FOR_INPUT"
 	StateCompleted       AgentState = "COMPLETED"
+	StateShuttingDown    AgentState = "SHUTTING_DOWN"
 	StateExited          AgentState = "EXITED"
 	StateError           AgentState = "ERROR"
 )

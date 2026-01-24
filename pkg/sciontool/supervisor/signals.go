@@ -11,11 +11,15 @@ import (
 	"syscall"
 )
 
+// PreStopHook is a function called before shutdown begins.
+type PreStopHook func() error
+
 // SignalHandler handles OS signals and forwards them to the supervisor.
 type SignalHandler struct {
-	supervisor *Supervisor
-	sigChan    chan os.Signal
-	cancel     context.CancelFunc
+	supervisor  *Supervisor
+	sigChan     chan os.Signal
+	cancel      context.CancelFunc
+	preStopHook PreStopHook
 }
 
 // NewSignalHandler creates a signal handler that forwards signals to the supervisor.
@@ -27,9 +31,15 @@ func NewSignalHandler(supervisor *Supervisor, cancel context.CancelFunc) *Signal
 	}
 }
 
+// WithPreStopHook sets a hook function to call before shutdown begins.
+func (h *SignalHandler) WithPreStopHook(hook PreStopHook) *SignalHandler {
+	h.preStopHook = hook
+	return h
+}
+
 // Start begins listening for signals. It handles SIGTERM and SIGINT by
-// cancelling the context (which triggers graceful shutdown), and forwards
-// SIGHUP to the child process.
+// running pre-stop hooks and then cancelling the context (which triggers
+// graceful shutdown), and forwards SIGHUP to the child process.
 func (h *SignalHandler) Start() {
 	signal.Notify(h.sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
@@ -37,6 +47,10 @@ func (h *SignalHandler) Start() {
 		for sig := range h.sigChan {
 			switch sig {
 			case syscall.SIGTERM, syscall.SIGINT:
+				// Run pre-stop hook before triggering shutdown
+				if h.preStopHook != nil {
+					_ = h.preStopHook() // Best effort, don't block shutdown on errors
+				}
 				// Trigger graceful shutdown by cancelling context
 				h.cancel()
 				return

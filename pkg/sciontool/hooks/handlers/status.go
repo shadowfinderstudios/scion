@@ -103,6 +103,15 @@ func (h *StatusHandler) eventToState(event *hooks.Event) hooks.AgentState {
 	case hooks.EventSessionStart:
 		return hooks.StateStarting
 
+	case hooks.EventPreStart:
+		return hooks.StateInitializing
+
+	case hooks.EventPostStart:
+		return hooks.StateIdle
+
+	case hooks.EventPreStop:
+		return hooks.StateShuttingDown
+
 	case hooks.EventPromptSubmit, hooks.EventAgentStart:
 		return hooks.StateThinking
 

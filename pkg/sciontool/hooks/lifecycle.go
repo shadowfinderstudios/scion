@@ -59,6 +59,16 @@ func (m *LifecycleManager) RunPostStart() error {
 	return m.runHooks(event)
 }
 
+// RunPreStop executes pre-stop lifecycle hooks.
+// Called when a termination signal (SIGTERM/SIGINT) is received,
+// before starting the graceful shutdown process.
+func (m *LifecycleManager) RunPreStop() error {
+	event := &Event{
+		Name: EventPreStop,
+	}
+	return m.runHooks(event)
+}
+
 // RunSessionEnd executes session-end lifecycle hooks.
 // Called on graceful shutdown before child termination.
 func (m *LifecycleManager) RunSessionEnd() error {

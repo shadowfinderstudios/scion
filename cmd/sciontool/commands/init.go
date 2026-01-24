@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
+	"github.com/ptone/scion-agent/pkg/sciontool/hooks/handlers"
 	"github.com/ptone/scion-agent/pkg/sciontool/supervisor"
 )
 
@@ -84,6 +85,16 @@ func runInit(args []string) int {
 	// Initialize lifecycle hooks manager
 	lifecycleManager := hooks.NewLifecycleManager()
 
+	// Register status and logging handlers for lifecycle events
+	// These handlers update agent-info.json and agent.log on container lifecycle events
+	statusHandler := handlers.NewStatusHandler()
+	loggingHandler := handlers.NewLoggingHandler()
+
+	for _, eventName := range []string{hooks.EventPreStart, hooks.EventPostStart, hooks.EventPreStop, hooks.EventSessionEnd} {
+		lifecycleManager.RegisterHandler(eventName, statusHandler.Handle)
+		lifecycleManager.RegisterHandler(eventName, loggingHandler.Handle)
+	}
+
 	// Run pre-start hooks (after setup, before child process)
 	logInfo("Running pre-start hooks...")
 	if err := lifecycleManager.RunPreStart(); err != nil {
@@ -101,8 +112,12 @@ func runInit(args []string) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Set up signal handling
-	sigHandler := supervisor.NewSignalHandler(sup, cancel)
+	// Set up signal handling with pre-stop hook for graceful shutdown
+	sigHandler := supervisor.NewSignalHandler(sup, cancel).
+		WithPreStopHook(func() error {
+			logInfo("Running pre-stop hooks...")
+			return lifecycleManager.RunPreStop()
+		})
 	sigHandler.Start()
 	defer sigHandler.Stop()
 

@@ -83,9 +83,11 @@ func (h *LoggingHandler) eventToState(event *hooks.Event) hooks.AgentState {
 	case hooks.EventSessionEnd:
 		return hooks.StateExited
 	case hooks.EventPreStart:
-		return hooks.StateStarting
+		return hooks.StateInitializing
 	case hooks.EventPostStart:
 		return hooks.StateIdle
+	case hooks.EventPreStop:
+		return hooks.StateShuttingDown
 	default:
 		return hooks.StateIdle
 	}
@@ -147,10 +149,13 @@ func (h *LoggingHandler) formatLogMessage(event *hooks.Event) string {
 		return "Notification received"
 
 	case hooks.EventPreStart:
-		return "Pre-start hooks executed"
+		return "Container initializing"
 
 	case hooks.EventPostStart:
-		return "Post-start hooks executed"
+		return "Container ready"
+
+	case hooks.EventPreStop:
+		return "Container shutting down (received termination signal)"
 
 	default:
 		return fmt.Sprintf("Event: %s", event.RawName)

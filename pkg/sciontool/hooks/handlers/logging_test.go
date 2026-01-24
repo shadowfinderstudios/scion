@@ -58,6 +58,21 @@ func TestLoggingHandler_Handle(t *testing.T) {
 			wantContain: "Session ended (reason: complete)",
 		},
 		{
+			name:        "PreStart",
+			event:       &hooks.Event{Name: hooks.EventPreStart},
+			wantContain: "Container initializing",
+		},
+		{
+			name:        "PostStart",
+			event:       &hooks.Event{Name: hooks.EventPostStart},
+			wantContain: "Container ready",
+		},
+		{
+			name:        "PreStop",
+			event:       &hooks.Event{Name: hooks.EventPreStop},
+			wantContain: "Container shutting down",
+		},
+		{
 			name:        "ToolStart",
 			event:       &hooks.Event{Name: hooks.EventToolStart, Data: hooks.EventData{ToolName: "Bash"}},
 			wantContain: "Running tool: Bash",

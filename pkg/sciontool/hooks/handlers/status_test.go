@@ -69,6 +69,21 @@ func TestStatusHandler_Handle(t *testing.T) {
 			wantStatus: hooks.StateStarting,
 		},
 		{
+			name:       "PreStart sets INITIALIZING",
+			event:      &hooks.Event{Name: hooks.EventPreStart},
+			wantStatus: hooks.StateInitializing,
+		},
+		{
+			name:       "PostStart sets IDLE",
+			event:      &hooks.Event{Name: hooks.EventPostStart},
+			wantStatus: hooks.StateIdle,
+		},
+		{
+			name:       "PreStop sets SHUTTING_DOWN",
+			event:      &hooks.Event{Name: hooks.EventPreStop},
+			wantStatus: hooks.StateShuttingDown,
+		},
+		{
 			name:       "PromptSubmit sets THINKING",
 			event:      &hooks.Event{Name: hooks.EventPromptSubmit},
 			wantStatus: hooks.StateThinking,
