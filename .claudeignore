@@ -1,0 +1,8 @@
+# scion ignore
+.scion/
+# binaries
+/scion
+scion-agent
+
+# secrets
+TEST_GEMINI_KEY
