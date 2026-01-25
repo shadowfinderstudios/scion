@@ -156,6 +156,7 @@ web/
 
 ## Milestone 4: Authentication Flow
 
+
 **Goal:** Implement OAuth authentication with session management.
 
 ### Deliverables
@@ -185,6 +186,11 @@ web/
    - `<scion-login-page>` component
    - Provider selection buttons
    - Error handling/display
+
+### Basic authorization
+While the Google oauth provides authentication, we will have a simple settings based authorization that for now will simply check the domain of the email address of the logged in user against a list in the settings of AuthorizedDomains
+
+Note: the implementation of this auth flow should not interfer with the use of dev-auth mode.
 
 ### Test Criteria
 
