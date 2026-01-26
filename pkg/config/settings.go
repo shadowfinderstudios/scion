@@ -89,6 +89,7 @@ type CLIConfig struct {
 }
 
 type Settings struct {
+	GroveID         string                   `json:"grove_id,omitempty" yaml:"grove_id,omitempty" koanf:"grove_id"`
 	ActiveProfile   string                   `json:"active_profile" yaml:"active_profile" koanf:"active_profile"`
 	DefaultTemplate string                   `json:"default_template,omitempty" yaml:"default_template,omitempty" koanf:"default_template"`
 	Bucket          *BucketConfig            `json:"bucket,omitempty" yaml:"bucket,omitempty" koanf:"bucket"`
@@ -240,6 +241,9 @@ func MergeSettings(base *Settings, data []byte) error {
 		return err
 	}
 
+	if override.GroveID != "" {
+		base.GroveID = override.GroveID
+	}
 	if override.ActiveProfile != "" {
 		base.ActiveProfile = override.ActiveProfile
 	}
@@ -478,6 +482,8 @@ func UpdateSetting(grovePath string, key string, value string, global bool) erro
 
 	// Update the field
 	switch key {
+	case "grove_id":
+		current.GroveID = value
 	case "active_profile":
 		current.ActiveProfile = value
 	case "default_template":
@@ -565,6 +571,8 @@ func UpdateSetting(grovePath string, key string, value string, global bool) erro
 
 func GetSettingValue(s *Settings, key string) (string, error) {
 	switch key {
+	case "grove_id":
+		return s.GroveID, nil
 	case "active_profile":
 		return s.ActiveProfile, nil
 	case "default_template":
@@ -636,6 +644,7 @@ func GetSettingValue(s *Settings, key string) (string, error) {
 
 func GetSettingsMap(s *Settings) map[string]string {
 	m := make(map[string]string)
+	m["grove_id"] = s.GroveID
 	m["active_profile"] = s.ActiveProfile
 	m["default_template"] = s.DefaultTemplate
 	if s.Bucket != nil {

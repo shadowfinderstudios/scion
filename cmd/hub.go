@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ptone/scion-agent/pkg/config"
@@ -320,6 +321,18 @@ func runHubRegister(cmd *cobra.Command, args []string) error {
 	// Get grove info
 	var groveName string
 	var gitRemote string
+	var groveID string
+
+	// Get grove_id from settings, or generate if missing (backward compatibility)
+	groveID = settings.GroveID
+	if groveID == "" {
+		// Generate grove_id for older groves that don't have one
+		groveID = config.GenerateGroveIDForDir(filepath.Dir(resolvedPath))
+		// Save it for future use
+		if err := config.UpdateSetting(resolvedPath, "grove_id", groveID, isGlobal); err != nil {
+			fmt.Printf("Warning: failed to save generated grove_id: %v\n", err)
+		}
+	}
 
 	if isGlobal {
 		groveName = "global"
@@ -361,6 +374,7 @@ func runHubRegister(cmd *cobra.Command, args []string) error {
 
 	// Build registration request
 	req := &hubclient.RegisterGroveRequest{
+		ID:        groveID,
 		Name:      groveName,
 		GitRemote: util.NormalizeGitRemote(gitRemote),
 		Path:      resolvedPath,
@@ -389,12 +403,8 @@ func runHubRegister(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
-	// Save the grove ID
-	if resp.Grove != nil && resp.Grove.ID != "" {
-		if err := config.UpdateSetting(resolvedPath, "hub.groveId", resp.Grove.ID, isGlobal); err != nil {
-			fmt.Printf("Warning: failed to save grove ID: %v\n", err)
-		}
-	}
+	// Note: grove_id is now a client-generated top-level setting saved during init.
+	// We no longer save hub.groveId here as it's redundant with grove_id.
 
 	// Save the host token
 	if resp.HostToken != "" {

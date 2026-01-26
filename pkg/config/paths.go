@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,4 +187,35 @@ func ResolveGrovePath(path string) (string, bool, error) {
 	isGlobal := abs == globalDir
 
 	return abs, isGlobal, nil
+}
+
+// RequireGrovePath resolves a grove path, erroring if no project is found and global is not specified.
+// This is used by commands that require an explicit grove context.
+// If path is empty and no project grove is found, returns an error suggesting --global.
+// Returns the absolute path, whether it's the global grove, and any error.
+func RequireGrovePath(path string) (string, bool, error) {
+	// Explicit global request
+	if path == "global" || path == "home" {
+		g, err := GetGlobalDir()
+		return g, true, err
+	}
+
+	// Explicit path specified
+	if path != "" {
+		globalDir, _ := GetGlobalDir()
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", false, err
+		}
+		isGlobal := abs == globalDir
+		return abs, isGlobal, nil
+	}
+
+	// No path specified - require project grove to exist
+	if p, ok := FindProjectRoot(); ok {
+		return p, false, nil
+	}
+
+	// No project found and no explicit path - error
+	return "", false, fmt.Errorf("not in a scion project. Use --global for global grove or run 'scion init' to create a project grove")
 }

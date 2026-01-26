@@ -44,6 +44,41 @@ sub-agents with isolated identities, credentials, and workspaces.`,
 			}
 		}
 
+		// Determine if this command requires explicit grove context
+		// Commands that don't require grove context:
+		// - help, version, completion (built-in or explicit)
+		// - init, grove init (creates grove)
+		// - server (runs hub server, doesn't need local grove)
+		cmdName := cmd.Name()
+		parentName := ""
+		if cmd.Parent() != nil {
+			parentName = cmd.Parent().Name()
+		}
+
+		requiresGrove := true
+		switch cmdName {
+		case "help", "version", "completion", "server":
+			requiresGrove = false
+		case "init":
+			// Both top-level init and grove init don't require existing grove
+			requiresGrove = false
+		case "scion":
+			// Root command itself doesn't require grove
+			requiresGrove = false
+		}
+		// Also check if parent is grove and command is init
+		if parentName == "grove" && cmdName == "init" {
+			requiresGrove = false
+		}
+
+		// For commands that require grove context, use RequireGrovePath
+		// to error if no project found and --global not specified
+		if requiresGrove && grovePath == "" {
+			if _, _, err := config.RequireGrovePath(grovePath); err != nil {
+				return err
+			}
+		}
+
 		// Load settings to get cli.autohelp
 		settings, err := config.LoadSettings(grovePath)
 		if err == nil && settings.CLI != nil && settings.CLI.AutoHelp != nil {

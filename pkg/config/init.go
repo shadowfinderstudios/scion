@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/google/uuid"
 	"github.com/ptone/scion-agent/pkg/api"
+	"github.com/ptone/scion-agent/pkg/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -153,7 +155,63 @@ func SeedCommonFiles(templateDir, genericEmbedDir, specificEmbedDir, configDirNa
 	return nil
 }
 
+// GenerateGroveID creates a grove ID based on git context.
+// For git repos with remote: normalized remote URL (e.g., github.com/org/repo)
+// For git repos without remote: UUID
+// For non-git directories: UUID
+func GenerateGroveID() string {
+	if util.IsGitRepo() {
+		remote := util.GetGitRemote()
+		if remote != "" {
+			return util.NormalizeGitRemote(remote)
+		}
+	}
+	return uuid.New().String()
+}
 
+// GenerateGroveIDForDir creates a grove ID based on git context for the specified directory.
+func GenerateGroveIDForDir(dir string) string {
+	if util.IsGitRepoDir(dir) {
+		remote := util.GetGitRemoteDir(dir)
+		if remote != "" {
+			return util.NormalizeGitRemote(remote)
+		}
+	}
+	return uuid.New().String()
+}
+
+// IsInsideGrove returns true if the current working directory or any parent contains a .scion directory.
+func IsInsideGrove() bool {
+	_, ok := FindProjectRoot()
+	return ok
+}
+
+// GetEnclosingGrovePath returns the path to the enclosing .scion directory if one exists,
+// along with the root directory containing it.
+func GetEnclosingGrovePath() (grovePath string, rootDir string, found bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", false
+	}
+
+	dir := wd
+	for {
+		p := filepath.Join(dir, DotScion)
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			if abs, err := filepath.EvalSymlinks(p); err == nil {
+				return abs, dir, true
+			}
+			return p, dir, true
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir { // Reached filesystem root
+			break
+		}
+		dir = parent
+	}
+	return "", "", false
+}
 
 func InitProject(targetDir string, harnesses []api.Harness) error {
 	var projectDir string

@@ -66,6 +66,7 @@ type ListGrovesResponse struct {
 
 // RegisterGroveRequest is the request for registering a grove.
 type RegisterGroveRequest struct {
+	ID        string            `json:"id,omitempty"`  // Client-provided grove ID (from grove_id setting)
 	Name      string            `json:"name"`
 	GitRemote string            `json:"gitRemote"`
 	Path      string            `json:"path"`

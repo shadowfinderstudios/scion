@@ -539,6 +539,7 @@ type CreateGroveRequest struct {
 }
 
 type RegisterGroveRequest struct {
+	ID        string            `json:"id,omitempty"` // Client-provided grove ID
 	Name      string            `json:"name"`
 	GitRemote string            `json:"gitRemote"`
 	Path      string            `json:"path,omitempty"`
@@ -668,7 +669,19 @@ func (s *Server) handleGroveRegister(w http.ResponseWriter, r *http.Request) {
 	var grove *store.Grove
 	var created bool
 
-	if normalizedRemote != "" {
+	// First, try to look up by client-provided grove ID
+	if req.ID != "" {
+		existingGrove, err := s.store.GetGrove(ctx, req.ID)
+		if err == nil {
+			grove = existingGrove
+		} else if err != store.ErrNotFound {
+			writeErrorFromErr(w, err, "")
+			return
+		}
+	}
+
+	// If not found by ID, try git remote lookup
+	if grove == nil && normalizedRemote != "" {
 		// For groves with git remote, look up by git remote (exact match)
 		existingGrove, err := s.store.GetGroveByGitRemote(ctx, normalizedRemote)
 		if err == nil {
@@ -677,7 +690,10 @@ func (s *Server) handleGroveRegister(w http.ResponseWriter, r *http.Request) {
 			writeErrorFromErr(w, err, "")
 			return
 		}
-	} else {
+	}
+
+	// If still not found and no git remote, try by slug (for global groves)
+	if grove == nil && normalizedRemote == "" {
 		// For groves without git remote (like global groves), look up by slug (case-insensitive)
 		slug := api.Slugify(req.Name)
 		existingGrove, err := s.store.GetGroveBySlugCaseInsensitive(ctx, slug)
@@ -691,8 +707,14 @@ func (s *Server) handleGroveRegister(w http.ResponseWriter, r *http.Request) {
 
 	// Create new grove if not found
 	if grove == nil {
+		// Use client-provided ID if available, otherwise generate
+		groveID := req.ID
+		if groveID == "" {
+			groveID = api.NewUUID()
+		}
+
 		grove = &store.Grove{
-			ID:         api.NewUUID(),
+			ID:         groveID,
 			Name:       req.Name,
 			Slug:       api.Slugify(req.Name),
 			GitRemote:  normalizedRemote,
