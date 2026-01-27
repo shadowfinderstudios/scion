@@ -14,16 +14,18 @@ ENV CGO_ENABLED=1
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source and build sciontool
+# Copy source and build scion and sciontool
 COPY cmd/ ./cmd/
 COPY pkg/ ./pkg/
-RUN go build -ldflags="-s -w" -o /usr/local/bin/sciontool ./cmd/sciontool/
+RUN go build -ldflags="-s -w" -o /usr/local/bin/scion ./cmd/scion/ && \
+    go build -ldflags="-s -w" -o /usr/local/bin/sciontool ./cmd/sciontool/
 
 # Final stage
 FROM base
 USER root
 
-# Copy sciontool from builder
+# Copy scion and sciontool from builder
+COPY --from=builder /usr/local/bin/scion /usr/local/bin/scion
 COPY --from=builder /usr/local/bin/sciontool /usr/local/bin/sciontool
 
 # Create scion user with passwordless sudo

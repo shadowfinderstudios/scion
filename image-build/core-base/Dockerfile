@@ -115,10 +115,17 @@ COPY --from=builder /usr/local/bin/git /usr/local/bin/git
 COPY --from=builder /usr/local/libexec/git-core /usr/local/libexec/git-core
 COPY --from=builder /usr/local/share/git-core /usr/local/share/git-core
 
+# Install gcloud CLI
+RUN curl https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz > /tmp/google-cloud-sdk.tar.gz && \
+    mkdir -p /usr/local/gcloud && \
+    tar -C /usr/local/gcloud -xf /tmp/google-cloud-sdk.tar.gz && \
+    /usr/local/gcloud/google-cloud-sdk/install.sh --quiet && \
+    rm /tmp/google-cloud-sdk.tar.gz
+
 # Setup npm global directory
 RUN mkdir -p /usr/local/share/npm-global
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=/usr/local/share/npm-global/bin:/usr/local/go/bin:$PATH
+ENV PATH=/usr/local/share/npm-global/bin:/usr/local/go/bin:/usr/local/gcloud/google-cloud-sdk/bin:$PATH
 ENV LC_ALL=C.UTF-8
 
 # Default to bash - no scion-specific entrypoint
