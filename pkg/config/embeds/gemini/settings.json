@@ -28,11 +28,9 @@
     "hideWindowTitle": true
   },
   "tools": {
-    "enableHooks": true,
     "enableMessageBusIntegration": true
   },
   "hooks": {
-    "enabled": true,
     "SessionStart": [
       {
         "matcher": "*",
