@@ -2797,6 +2797,8 @@ export const authRoutes = router;
 
 ### 13.3 Session Configuration
 
+**Important:** Cookie names cannot contain colons (`:`) per RFC 6265. Use underscores instead.
+
 ```typescript
 // src/server/config.ts
 
@@ -2811,7 +2813,8 @@ export interface SessionConfig {
 
 export function getSessionConfig(): SessionConfig {
   return {
-    key: 'scion:sess',
+    // Note: Cookie names cannot contain colons per RFC 6265
+    key: 'scion_sess',
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
@@ -2820,6 +2823,20 @@ export function getSessionConfig(): SessionConfig {
   };
 }
 ```
+
+### 13.4 Debug Mode
+
+When `SCION_API_DEBUG=true`, the web frontend enables:
+
+1. **Debug Logging:** Detailed console output for session, auth, and API proxy middleware
+2. **Debug Panel:** A UI component (`scion-debug-panel`) that displays:
+   - Current authentication state (session user, state user)
+   - Session info (exists, isNew, keys)
+   - Cookie presence and names
+   - OAuth configuration status
+3. **Debug Endpoint:** `GET /auth/debug` returns JSON with full auth state
+
+All fetch() calls to `/api/*` endpoints include `credentials: 'include'` to ensure session cookies are always sent.
 
 ---
 
