@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -24,7 +23,7 @@ var hubAuthCmd = &cobra.Command{
 	Short: "Manage Hub authentication",
 	Long: `Manage authentication with a Scion Hub.
 
-Commands for logging in, logging out, and checking authentication status.`,
+Commands for logging in and logging out. Use 'scion hub status' to check authentication status.`,
 }
 
 // hubAuthLoginCmd authenticates with the Hub
@@ -45,14 +44,6 @@ Example:
 	RunE: runHubAuthLogin,
 }
 
-// hubAuthStatusCmd shows authentication status
-var hubAuthStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show authentication status",
-	Long:  `Show the current authentication status with the Hub.`,
-	RunE:  runHubAuthStatus,
-}
-
 // hubAuthLogoutCmd clears stored credentials
 var hubAuthLogoutCmd = &cobra.Command{
 	Use:   "logout",
@@ -64,7 +55,6 @@ var hubAuthLogoutCmd = &cobra.Command{
 func init() {
 	hubCmd.AddCommand(hubAuthCmd)
 	hubAuthCmd.AddCommand(hubAuthLoginCmd)
-	hubAuthCmd.AddCommand(hubAuthStatusCmd)
 	hubAuthCmd.AddCommand(hubAuthLogoutCmd)
 
 	// Flags for login command
@@ -145,57 +135,6 @@ func runHubAuthLogin(cmd *cobra.Command, args []string) error {
 	fmt.Println("\nAuthentication successful!")
 	if credToken.User != nil {
 		fmt.Printf("Logged in as: %s (%s)\n", credToken.User.DisplayName, credToken.User.Email)
-	}
-
-	return nil
-}
-
-func runHubAuthStatus(cmd *cobra.Command, args []string) error {
-	hubURL := getDefaultHubURL()
-	if hubURL == "" {
-		fmt.Println("Hub URL not configured.")
-		fmt.Println("Use 'scion hub auth login --hub-url <url>' to authenticate.")
-		return nil
-	}
-
-	creds, err := credentials.Load(hubURL)
-	if err != nil {
-		if err == credentials.ErrNotAuthenticated {
-			fmt.Println("Not authenticated.")
-			fmt.Printf("Run 'scion hub auth login' to authenticate with %s\n", hubURL)
-			return nil
-		}
-		if err == credentials.ErrTokenExpired {
-			fmt.Println("Authentication expired.")
-			fmt.Printf("Run 'scion hub auth login' to re-authenticate with %s\n", hubURL)
-			return nil
-		}
-		return fmt.Errorf("failed to load credentials: %w", err)
-	}
-
-	// Verify token is still valid by making a request
-	client, err := hubclient.New(hubURL,
-		hubclient.WithBearerToken(creds.AccessToken),
-		hubclient.WithTimeout(10*time.Second),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create Hub client: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-	defer cancel()
-
-	user, err := client.Auth().Me(ctx)
-	if err != nil {
-		fmt.Println("Authentication may have expired or is invalid.")
-		fmt.Printf("Run 'scion hub auth login' to re-authenticate.\n")
-		return nil
-	}
-
-	fmt.Printf("Authenticated as: %s (%s)\n", user.DisplayName, user.Email)
-	fmt.Printf("Hub: %s\n", hubURL)
-	if !creds.ExpiresAt.IsZero() {
-		fmt.Printf("Token expires: %s\n", creds.ExpiresAt.Format(time.RFC3339))
 	}
 
 	return nil

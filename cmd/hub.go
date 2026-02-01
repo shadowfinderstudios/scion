@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ptone/scion-agent/pkg/apiclient"
 	"github.com/ptone/scion-agent/pkg/config"
 	"github.com/ptone/scion-agent/pkg/credentials"
 	"github.com/ptone/scion-agent/pkg/harness"
@@ -152,6 +153,64 @@ func init() {
 	hubHostsCmd.Flags().BoolVar(&hubOutputJSON, "json", false, "Output in JSON format")
 }
 
+// authInfo describes the authentication method being used
+type authInfo struct {
+	Method      string // Human-readable description
+	MethodType  string // Short type: "oauth", "bearer", "apikey", "devauth", "none"
+	Source      string // Where the credentials came from
+	IsDevAuth   bool   // Whether dev-auth is being used
+	HasOAuth    bool   // Whether OAuth credentials are present
+	OAuthCreds  *credentials.HubCredentials
+}
+
+// getAuthInfo determines what authentication method will be used for a given endpoint
+func getAuthInfo(settings *config.Settings, endpoint string) authInfo {
+	info := authInfo{
+		Method:     "none",
+		MethodType: "none",
+	}
+
+	// Check settings-based auth first
+	if settings.Hub != nil {
+		if settings.Hub.Token != "" {
+			info.Method = "Bearer token"
+			info.MethodType = "bearer"
+			info.Source = "settings"
+			return info
+		}
+		if settings.Hub.APIKey != "" {
+			info.Method = "API key"
+			info.MethodType = "apikey"
+			info.Source = "settings"
+			return info
+		}
+	}
+
+	// Check for OAuth credentials from scion hub auth login
+	if endpoint != "" {
+		if creds, err := credentials.Load(endpoint); err == nil && creds.AccessToken != "" {
+			info.Method = "OAuth"
+			info.MethodType = "oauth"
+			info.Source = "scion hub auth login"
+			info.HasOAuth = true
+			info.OAuthCreds = creds
+			return info
+		}
+	}
+
+	// Check for dev auth
+	token, source := apiclient.ResolveDevTokenWithSource()
+	if token != "" {
+		info.Method = "Dev auth"
+		info.MethodType = "devauth"
+		info.Source = source
+		info.IsDevAuth = true
+		return info
+	}
+
+	return info
+}
+
 func getHubClient(settings *config.Settings) (hubclient.Client, error) {
 	endpoint := GetHubEndpoint(settings)
 	if endpoint == "" {
@@ -160,22 +219,22 @@ func getHubClient(settings *config.Settings) (hubclient.Client, error) {
 
 	var opts []hubclient.Option
 
+	// Get auth info for logging
+	info := getAuthInfo(settings, endpoint)
+
 	// Add authentication - check in priority order
 	// Note: HostToken is intentionally NOT used here. HostTokens are for host-level
 	// operations (registration, heartbeats) and are NOT user authentication tokens.
 	// For user operations (listing groves, agents, etc.), we use user tokens, API keys,
 	// OAuth credentials, or dev auth.
 	authConfigured := false
-	authMethod := ""
 	if settings.Hub != nil {
 		if settings.Hub.Token != "" {
 			opts = append(opts, hubclient.WithBearerToken(settings.Hub.Token))
 			authConfigured = true
-			authMethod = "bearer token from settings"
 		} else if settings.Hub.APIKey != "" {
 			opts = append(opts, hubclient.WithAPIKey(settings.Hub.APIKey))
 			authConfigured = true
-			authMethod = "API key from settings"
 		}
 	}
 
@@ -184,7 +243,6 @@ func getHubClient(settings *config.Settings) (hubclient.Client, error) {
 		if accessToken := credentials.GetAccessToken(endpoint); accessToken != "" {
 			opts = append(opts, hubclient.WithBearerToken(accessToken))
 			authConfigured = true
-			authMethod = "OAuth credentials from scion hub auth login"
 		}
 	}
 
@@ -192,10 +250,9 @@ func getHubClient(settings *config.Settings) (hubclient.Client, error) {
 	// This checks SCION_DEV_TOKEN env var and ~/.scion/dev-token file
 	if !authConfigured {
 		opts = append(opts, hubclient.WithAutoDevAuth())
-		authMethod = "dev auth (auto-detected)"
 	}
 
-	util.Debugf("Hub client auth: %s", authMethod)
+	util.Debugf("Hub client auth: %s (source: %s)", info.Method, info.Source)
 	util.Debugf("Hub endpoint: %s", endpoint)
 
 	opts = append(opts, hubclient.WithTimeout(30*time.Second))
@@ -219,6 +276,9 @@ func runHubStatus(cmd *cobra.Command, args []string) error {
 
 	hubEnabled := settings.IsHubEnabled()
 
+	// Get authentication info
+	authInfo := getAuthInfo(settings, endpoint)
+
 	if hubOutputJSON {
 		status := map[string]interface{}{
 			"enabled":       hubEnabled,
@@ -232,6 +292,21 @@ func runHubStatus(cmd *cobra.Command, args []string) error {
 			status["hasToken"] = settings.Hub.Token != ""
 			status["hasApiKey"] = settings.Hub.APIKey != ""
 			status["hasHostToken"] = settings.Hub.HostToken != ""
+		}
+
+		// Add auth info to JSON output
+		status["authMethod"] = authInfo.MethodType
+		status["authSource"] = authInfo.Source
+		status["isDevAuth"] = authInfo.IsDevAuth
+		if authInfo.OAuthCreds != nil && authInfo.OAuthCreds.User != nil {
+			status["authUser"] = map[string]string{
+				"id":          authInfo.OAuthCreds.User.ID,
+				"email":       authInfo.OAuthCreds.User.Email,
+				"displayName": authInfo.OAuthCreds.User.DisplayName,
+			}
+			if !authInfo.OAuthCreds.ExpiresAt.IsZero() {
+				status["authExpires"] = authInfo.OAuthCreds.ExpiresAt.Format(time.RFC3339)
+			}
 		}
 
 		// Try to connect and get health
@@ -270,9 +345,34 @@ func runHubStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Grove ID:   %s\n", valueOrNone(settings.GroveID))
 	if settings.Hub != nil {
 		fmt.Printf("Host ID:    %s\n", valueOrNone(settings.Hub.HostID))
-		fmt.Printf("Has Token:  %v\n", settings.Hub.Token != "")
-		fmt.Printf("Has API Key: %v\n", settings.Hub.APIKey != "")
-		fmt.Printf("Has Host Token: %v\n", settings.Hub.HostToken != "")
+	}
+
+	// Authentication status section
+	fmt.Println()
+	fmt.Println("Authentication")
+	fmt.Println("--------------")
+	if authInfo.MethodType == "none" {
+		fmt.Println("Method:     Not authenticated")
+	} else {
+		fmt.Printf("Method:     %s\n", authInfo.Method)
+		if authInfo.Source != "" {
+			fmt.Printf("Source:     %s\n", authInfo.Source)
+		}
+		if authInfo.IsDevAuth {
+			fmt.Println("            (development mode - not for production use)")
+		}
+		if authInfo.HasOAuth && authInfo.OAuthCreds != nil {
+			if authInfo.OAuthCreds.User != nil {
+				fmt.Printf("User:       %s (%s)\n", authInfo.OAuthCreds.User.DisplayName, authInfo.OAuthCreds.User.Email)
+			}
+			if !authInfo.OAuthCreds.ExpiresAt.IsZero() {
+				if time.Now().After(authInfo.OAuthCreds.ExpiresAt) {
+					fmt.Printf("Expires:    %s (EXPIRED)\n", authInfo.OAuthCreds.ExpiresAt.Format(time.RFC3339))
+				} else {
+					fmt.Printf("Expires:    %s\n", authInfo.OAuthCreds.ExpiresAt.Format(time.RFC3339))
+				}
+			}
+		}
 	}
 
 	// Try to connect
@@ -293,6 +393,18 @@ func runHubStatus(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\nConnection: ok\n")
 			fmt.Printf("Hub Version: %s\n", health.Version)
 			fmt.Printf("Hub Status:  %s\n", health.Status)
+
+			// If OAuth, verify auth is actually working by calling /auth/me
+			if authInfo.HasOAuth {
+				meCtx, meCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer meCancel()
+				if user, err := client.Auth().Me(meCtx); err == nil {
+					fmt.Printf("\nAuthenticated as: %s (%s)\n", user.DisplayName, user.Email)
+				} else {
+					fmt.Printf("\nAuth verification: failed (%s)\n", err)
+					fmt.Println("Run 'scion hub auth login' to re-authenticate.")
+				}
+			}
 		}
 	}
 
