@@ -58,9 +58,12 @@ type templateService struct {
 
 // ListTemplatesOptions configures template list filtering.
 type ListTemplatesOptions struct {
+	Name    string // Filter by exact template name
+	Search  string // Full-text search on name/description
 	Scope   string // Filter by scope (global, grove, user)
 	GroveID string // Filter by grove
 	Harness string // Filter by harness type
+	Status  string // Filter by status (active, archived)
 	Page    apiclient.PageOptions
 }
 
@@ -153,6 +156,12 @@ type DownloadURLInfo struct {
 func (s *templateService) List(ctx context.Context, opts *ListTemplatesOptions) (*ListTemplatesResponse, error) {
 	query := url.Values{}
 	if opts != nil {
+		if opts.Name != "" {
+			query.Set("name", opts.Name)
+		}
+		if opts.Search != "" {
+			query.Set("search", opts.Search)
+		}
 		if opts.Scope != "" {
 			query.Set("scope", opts.Scope)
 		}
@@ -161,6 +170,9 @@ func (s *templateService) List(ctx context.Context, opts *ListTemplatesOptions) 
 		}
 		if opts.Harness != "" {
 			query.Set("harness", opts.Harness)
+		}
+		if opts.Status != "" {
+			query.Set("status", opts.Status)
 		}
 		opts.Page.ToQuery(query)
 	}

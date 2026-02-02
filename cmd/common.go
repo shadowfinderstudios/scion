@@ -311,11 +311,30 @@ func startAgentViaHub(hubCtx *HubContext, agentName, task string, resume bool) e
 		return wrapHubError(err)
 	}
 
+	// Resolve template if specified (Section 9.4 - Local Template Resolution)
+	var resolvedTemplate string
+	if templateName != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		result, err := ResolveTemplateForHub(ctx, hubCtx, templateName)
+		if err != nil {
+			return wrapHubError(fmt.Errorf("template resolution failed: %w", err))
+		}
+
+		// Use the template ID if available, otherwise fall back to name
+		if result.TemplateID != "" {
+			resolvedTemplate = result.TemplateID
+		} else {
+			resolvedTemplate = result.TemplateName
+		}
+	}
+
 	// Build create request (Hub creates and starts in one operation)
 	req := &hubclient.CreateAgentRequest{
 		Name:     agentName,
 		GroveID:  groveID,
-		Template: templateName,
+		Template: resolvedTemplate,
 		Task:     task,
 		Branch:   branch,
 		Resume:   resume,

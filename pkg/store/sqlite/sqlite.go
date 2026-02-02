@@ -1430,6 +1430,11 @@ func (s *SQLiteStore) ListTemplates(ctx context.Context, filter store.TemplateFi
 	var conditions []string
 	var args []interface{}
 
+	if filter.Name != "" {
+		// Exact match on name or slug
+		conditions = append(conditions, "(name = ? OR slug = ?)")
+		args = append(args, filter.Name, filter.Name)
+	}
 	if filter.Scope != "" {
 		conditions = append(conditions, "scope = ?")
 		args = append(args, filter.Scope)

@@ -27,4 +27,9 @@ func init() {
 	resumeCmd.Flags().StringVarP(&agentImage, "image", "i", "", "Container image to use (overrides template)")
 	resumeCmd.Flags().BoolVar(&noAuth, "no-auth", false, "Disable authentication propagation")
 	resumeCmd.Flags().BoolVarP(&attach, "attach", "a", false, "Attach to the agent TTY after starting")
+
+	// Template resolution flags for Hub mode (Section 9.4)
+	resumeCmd.Flags().BoolVar(&uploadTemplate, "upload-template", false, "Automatically upload local template to Hub if not found")
+	resumeCmd.Flags().BoolVar(&noUpload, "no-upload", false, "Fail if template requires upload (never prompt)")
+	resumeCmd.Flags().StringVar(&templateScope, "template-scope", "grove", "Scope for uploaded template (global, grove, user)")
 }

@@ -84,11 +84,30 @@ func createAgentViaHub(hubCtx *HubContext, agentName string) error {
 		return wrapHubError(err)
 	}
 
+	// Resolve template if specified
+	var resolvedTemplate string
+	if templateName != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		result, err := ResolveTemplateForHub(ctx, hubCtx, templateName)
+		if err != nil {
+			return wrapHubError(fmt.Errorf("template resolution failed: %w", err))
+		}
+
+		// Use the template ID if available, otherwise fall back to name
+		if result.TemplateID != "" {
+			resolvedTemplate = result.TemplateID
+		} else {
+			resolvedTemplate = result.TemplateName
+		}
+	}
+
 	// Build create request
 	req := &hubclient.CreateAgentRequest{
 		Name:     agentName,
 		GroveID:  groveID,
-		Template: templateName,
+		Template: resolvedTemplate,
 		Branch:   branch,
 	}
 
@@ -124,4 +143,9 @@ func init() {
 	createCmd.Flags().StringVarP(&agentImage, "image", "i", "", "Container image to use (overrides template)")
 	createCmd.Flags().StringVarP(&branch, "branch", "b", "", "Git branch to use for the agent workspace")
 	createCmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Host path to mount as /workspace")
+
+	// Template resolution flags for Hub mode (Section 9.4)
+	createCmd.Flags().BoolVar(&uploadTemplate, "upload-template", false, "Automatically upload local template to Hub if not found")
+	createCmd.Flags().BoolVar(&noUpload, "no-upload", false, "Fail if template requires upload (never prompt)")
+	createCmd.Flags().StringVar(&templateScope, "template-scope", "grove", "Scope for uploaded template (global, grove, user)")
 }

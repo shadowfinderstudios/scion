@@ -120,6 +120,7 @@ func (s *Server) listTemplatesV2(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
 	filter := store.TemplateFilter{
+		Name:    query.Get("name"),
 		Scope:   query.Get("scope"),
 		ScopeID: query.Get("scopeId"),
 		GroveID: query.Get("groveId"), // Backwards compat

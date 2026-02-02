@@ -217,6 +217,7 @@ type TemplateStore interface {
 
 // TemplateFilter defines criteria for filtering templates.
 type TemplateFilter struct {
+	Name    string // Exact match on template name
 	Scope   string
 	ScopeID string
 	GroveID string // Deprecated: use ScopeID
