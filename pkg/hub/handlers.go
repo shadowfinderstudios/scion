@@ -314,6 +314,20 @@ func (s *Server) handleAgentByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle workspace routes (supports GET for status and POST for sync operations)
+	if action == "workspace" || strings.HasPrefix(action, "workspace/") {
+		// Require user authentication for workspace operations
+		if GetUserIdentityFromContext(r.Context()) == nil {
+			writeError(w, http.StatusForbidden, ErrCodeForbidden, "This action requires user authentication", nil)
+			return
+		}
+		// Extract workspace sub-action (sync-from, sync-to, sync-to/finalize)
+		workspaceAction := strings.TrimPrefix(action, "workspace")
+		workspaceAction = strings.TrimPrefix(workspaceAction, "/")
+		s.handleWorkspaceRoutes(w, r, id, workspaceAction)
+		return
+	}
+
 	// Handle actions
 	if action != "" {
 		s.handleAgentAction(w, r, id, action)

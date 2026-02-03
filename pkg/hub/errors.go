@@ -156,6 +156,11 @@ func RuntimeError(w http.ResponseWriter, message string) {
 	writeError(w, http.StatusBadGateway, ErrCodeRuntimeError, message, nil)
 }
 
+// GatewayTimeout writes a 504 Gateway Timeout response for runtime host timeouts.
+func GatewayTimeout(w http.ResponseWriter, message string) {
+	writeError(w, http.StatusGatewayTimeout, ErrCodeUnavailable, message, nil)
+}
+
 // NoRuntimeHost writes a 422 Unprocessable Entity response when no runtime host
 // is available for agent creation. Includes available hosts as alternatives.
 func NoRuntimeHost(w http.ResponseWriter, message string, availableHosts []RuntimeHostSummary) {

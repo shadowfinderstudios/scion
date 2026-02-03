@@ -206,3 +206,15 @@ func TemplateStorageURI(bucket, scope, scopeID, templateSlug string) string {
 	path := TemplateStoragePath(scope, scopeID, templateSlug)
 	return "gs://" + bucket + "/" + path + "/"
 }
+
+// WorkspaceStoragePath returns the storage path for an agent's workspace.
+// Workspaces are stored under /workspaces/{groveId}/{agentId}/.
+func WorkspaceStoragePath(groveID, agentID string) string {
+	return "workspaces/" + groveID + "/" + agentID
+}
+
+// WorkspaceStorageURI returns the full storage URI for an agent's workspace.
+func WorkspaceStorageURI(bucket, groveID, agentID string) string {
+	path := WorkspaceStoragePath(groveID, agentID)
+	return "gs://" + bucket + "/" + path + "/"
+}
