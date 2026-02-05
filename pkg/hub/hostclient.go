@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,15 +90,15 @@ func (c *AuthenticatedHostClient) doRequest(ctx context.Context, hostID, method,
 	// Sign the request
 	if err := c.signRequest(ctx, req, hostID); err != nil {
 		if c.debug {
-			log.Printf("[AuthHostClient] Warning: failed to sign request: %v (continuing without auth)", err)
+			slog.Warn("Failed to sign request", "hostID", hostID, "error", err)
 		}
 		// Continue without authentication - the host may reject or allow depending on its config
 	} else if c.debug {
-		log.Printf("[AuthHostClient] Signed request for host %s", hostID)
+		slog.Debug("Signed request for host", "hostID", hostID)
 	}
 
 	if c.debug {
-		log.Printf("[AuthHostClient] %s %s", method, endpoint)
+		slog.Debug("Outgoing request to host", "method", method, "endpoint", endpoint)
 	}
 
 	return c.httpClient.Do(req)

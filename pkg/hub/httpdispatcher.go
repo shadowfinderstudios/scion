@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,7 +55,7 @@ func (c *HTTPRuntimeHostClient) CreateAgent(ctx context.Context, hostID, hostEnd
 	}
 
 	if c.debug {
-		log.Printf("[Hub:Dispatcher] POST %s", endpoint)
+		slog.Debug("Dispatcher request", "method", "POST", "endpoint", endpoint)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -90,7 +90,7 @@ func (c *HTTPRuntimeHostClient) StartAgent(ctx context.Context, hostID, hostEndp
 	endpoint := fmt.Sprintf("%s/api/v1/agents/%s/start", strings.TrimSuffix(hostEndpoint, "/"), url.PathEscape(agentID))
 
 	if c.debug {
-		log.Printf("[Hub:Dispatcher] POST %s", endpoint)
+		slog.Debug("Dispatcher request", "method", "POST", "endpoint", endpoint)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
@@ -119,7 +119,7 @@ func (c *HTTPRuntimeHostClient) StopAgent(ctx context.Context, hostID, hostEndpo
 	endpoint := fmt.Sprintf("%s/api/v1/agents/%s/stop", strings.TrimSuffix(hostEndpoint, "/"), url.PathEscape(agentID))
 
 	if c.debug {
-		log.Printf("[Hub:Dispatcher] POST %s", endpoint)
+		slog.Debug("Dispatcher request", "method", "POST", "endpoint", endpoint)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
@@ -148,7 +148,7 @@ func (c *HTTPRuntimeHostClient) RestartAgent(ctx context.Context, hostID, hostEn
 	endpoint := fmt.Sprintf("%s/api/v1/agents/%s/restart", strings.TrimSuffix(hostEndpoint, "/"), url.PathEscape(agentID))
 
 	if c.debug {
-		log.Printf("[Hub:Dispatcher] POST %s", endpoint)
+		slog.Debug("Dispatcher request", "method", "POST", "endpoint", endpoint)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
@@ -178,7 +178,7 @@ func (c *HTTPRuntimeHostClient) DeleteAgent(ctx context.Context, hostID, hostEnd
 		strings.TrimSuffix(hostEndpoint, "/"), url.PathEscape(agentID), deleteFiles, removeBranch)
 
 	if c.debug {
-		log.Printf("[Hub:Dispatcher] DELETE %s", endpoint)
+		slog.Debug("Dispatcher request", "method", "DELETE", "endpoint", endpoint)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
@@ -215,7 +215,7 @@ func (c *HTTPRuntimeHostClient) MessageAgent(ctx context.Context, hostID, hostEn
 	}
 
 	if c.debug {
-		log.Printf("[Hub:Dispatcher] POST %s", endpoint)
+		slog.Debug("Dispatcher request", "method", "POST", "endpoint", endpoint)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -315,12 +315,12 @@ func (d *HTTPAgentDispatcher) DispatchAgentCreate(ctx context.Context, agent *st
 		contrib, err := d.store.GetGroveContributor(ctx, agent.GroveID, agent.RuntimeHostID)
 		if err != nil {
 			if d.debug {
-				log.Printf("[Hub:Dispatcher] Warning: failed to get grove contributor for path lookup: %v", err)
+				slog.Warn("Failed to get grove contributor for path lookup", "error", err)
 			}
 		} else if contrib.LocalPath != "" {
 			grovePath = contrib.LocalPath
 			if d.debug {
-				log.Printf("[Hub:Dispatcher] Found grove path for host %s: %s", agent.RuntimeHostID, grovePath)
+				slog.Debug("Found grove path for host", "hostID", agent.RuntimeHostID, "path", grovePath)
 			}
 		}
 	}
@@ -336,8 +336,11 @@ func (d *HTTPAgentDispatcher) DispatchAgentCreate(ctx context.Context, agent *st
 	}
 
 	if d.debug {
-		log.Printf("[Hub:Dispatcher] DispatchAgentCreate: agent=%s, hubEndpoint=%q, tokenGenerator=%v",
-			agent.Name, d.hubEndpoint, d.tokenGenerator != nil)
+		slog.Debug("DispatchAgentCreate",
+			"agentName", agent.Name,
+			"hubEndpoint", d.hubEndpoint,
+			"hasTokenGenerator", d.tokenGenerator != nil,
+		)
 	}
 
 	// Generate agent token if token generator is available
@@ -345,17 +348,17 @@ func (d *HTTPAgentDispatcher) DispatchAgentCreate(ctx context.Context, agent *st
 		token, err := d.tokenGenerator.GenerateAgentToken(agent.ID, agent.GroveID)
 		if err != nil {
 			if d.debug {
-				log.Printf("[Hub:Dispatcher] Warning: failed to generate agent token: %v", err)
+				slog.Warn("Failed to generate agent token", "error", err)
 			}
 			// Continue without token - agent will operate in unauthenticated mode
 		} else {
 			req.AgentToken = token
 			if d.debug {
-				log.Printf("[Hub:Dispatcher] Generated agent token (length=%d)", len(token))
+				slog.Debug("Generated agent token", "length", len(token))
 			}
 		}
 	} else if d.debug {
-		log.Printf("[Hub:Dispatcher] No token generator configured - agent will not have Hub credentials")
+		slog.Debug("No token generator configured - agent will not have Hub credentials")
 	}
 
 	// Add configuration if available

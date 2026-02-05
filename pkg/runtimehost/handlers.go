@@ -2,7 +2,7 @@ package runtimehost
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -179,12 +179,18 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Debug log incoming request
 	if s.config.Debug {
-		log.Printf("[Host] Creating agent: name=%s, agentID=%s, groveID=%s", req.Name, req.AgentID, req.GroveID)
-		log.Printf("[Host] Hub credentials: hubEndpoint=%q, agentToken=%v, agentID=%q",
-			req.HubEndpoint, req.AgentToken != "", req.AgentID)
+		slog.Debug("Creating agent", "name", req.Name, "agentID", req.AgentID, "groveID", req.GroveID)
+		slog.Debug("Hub credentials",
+			"hubEndpoint", req.HubEndpoint,
+			"hasToken", req.AgentToken != "",
+			"agentID", req.AgentID,
+		)
 		if req.Config != nil {
-			log.Printf("[Host] Config: template=%s, image=%s, templateID=%s",
-				req.Config.Template, req.Config.Image, req.Config.TemplateID)
+			slog.Debug("Agent configuration",
+				"template", req.Config.Template,
+				"image", req.Config.Image,
+				"templateID", req.Config.TemplateID,
+			)
 		}
 	}
 
@@ -216,7 +222,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if req.AgentToken != "" {
 		env["SCION_HUB_TOKEN"] = req.AgentToken
 		if s.config.Debug {
-			log.Printf("[Host] Set SCION_HUB_TOKEN (length=%d)", len(req.AgentToken))
+			slog.Debug("SCION_HUB_TOKEN set", "length", len(req.AgentToken))
 		}
 	}
 	// Set Hub URL: prefer request's HubEndpoint, fall back to server's configured HubEndpoint
@@ -224,19 +230,19 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if hubEndpoint == "" && s.config.HubEndpoint != "" {
 		hubEndpoint = s.config.HubEndpoint
 		if s.config.Debug {
-			log.Printf("[Host] Using server's configured Hub endpoint as fallback")
+			slog.Debug("Using server Hub endpoint as fallback", "endpoint", hubEndpoint)
 		}
 	}
 	if hubEndpoint != "" {
 		env["SCION_HUB_URL"] = hubEndpoint
 		if s.config.Debug {
-			log.Printf("[Host] Set SCION_HUB_URL=%s", hubEndpoint)
+			slog.Debug("SCION_HUB_URL set", "url", hubEndpoint)
 		}
 	}
 	if req.AgentID != "" {
 		env["SCION_AGENT_ID"] = req.AgentID
 		if s.config.Debug {
-			log.Printf("[Host] Set SCION_AGENT_ID=%s", req.AgentID)
+			slog.Debug("SCION_AGENT_ID set", "id", req.AgentID)
 		}
 	}
 
@@ -247,12 +253,12 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Debug log final env count
 	if s.config.Debug {
-		log.Printf("[Host] Final environment has %d variables", len(env))
-		for k := range env {
+		slog.Debug("Final environment count", "count", len(env))
+		for k, v := range env {
 			if k == "SCION_HUB_TOKEN" {
-				log.Printf("[Host]   %s=<redacted>", k)
+				slog.Debug("  ENV", "key", k, "value", "<redacted>")
 			} else {
-				log.Printf("[Host]   %s=%s", k, env[k])
+				slog.Debug("  ENV", "key", k, "value", v)
 			}
 		}
 	}
@@ -271,7 +277,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Debug log grove path
 	if s.config.Debug && req.GrovePath != "" {
-		log.Printf("[Host] Using grove path from Hub: %s", req.GrovePath)
+		slog.Debug("Using grove path from Hub", "path", req.GrovePath)
 	}
 
 	// Hydrate template if Hub mode is enabled and template info is provided
@@ -289,7 +295,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		if templatePath != "" {
 			opts.Template = templatePath
 			if s.config.Debug {
-				log.Printf("[Host] Using hydrated template from: %s", templatePath)
+				slog.Debug("Using hydrated template", "path", templatePath)
 			}
 		}
 	}

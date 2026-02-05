@@ -4,7 +4,7 @@ package hub
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/ptone/scion-agent/pkg/store"
@@ -54,7 +54,7 @@ const (
 func writeError(w http.ResponseWriter, statusCode int, code, message string, details map[string]interface{}) {
 	// Log 5xx errors for debugging
 	if statusCode >= 500 {
-		log.Printf("[Hub] ERROR %d: %s - %s", statusCode, code, message)
+		slog.Error("API Error", "status", statusCode, "code", code, "message", message)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -102,7 +102,12 @@ func writeErrorFromErr(w http.ResponseWriter, err error, requestID string) {
 
 	// Log 5xx errors with the underlying error for debugging
 	if statusCode >= 500 {
-		log.Printf("[Hub] ERROR %d: %s - %v", statusCode, code, err)
+		slog.Error("API Error from Go error",
+			"status", statusCode,
+			"code", code,
+			"requestID", requestID,
+			"error", err,
+		)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

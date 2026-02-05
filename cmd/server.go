@@ -25,6 +25,7 @@ import (
 	"github.com/ptone/scion-agent/pkg/storage"
 	"github.com/ptone/scion-agent/pkg/store"
 	"github.com/ptone/scion-agent/pkg/store/sqlite"
+	"github.com/ptone/scion-agent/pkg/util/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -139,6 +140,23 @@ func checkPort(host string, port int) portStatus {
 }
 
 func runServerStart(cmd *cobra.Command, args []string) error {
+	// Initialize logging
+	useGCP := os.Getenv("SCION_LOG_GCP") == "true"
+	if os.Getenv("K_SERVICE") != "" {
+		// Auto-enable GCP logging on Cloud Run
+		useGCP = true
+	}
+
+	// Determine component name based on flags
+	component := "scion-server"
+	if enableHub && !enableRuntimeHost {
+		component = "scion-hub"
+	} else if !enableHub && enableRuntimeHost {
+		component = "scion-host"
+	}
+
+	logging.Setup(component, enableDebug, useGCP)
+
 	// Load configuration
 	cfg, err := config.LoadGlobalConfig(serverConfigPath)
 	if err != nil {

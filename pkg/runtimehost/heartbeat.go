@@ -3,7 +3,7 @@ package runtimehost
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -45,7 +45,6 @@ type HeartbeatService struct {
 	mu     sync.Mutex
 	stopCh chan struct{}
 	doneCh chan struct{}
-	logger *log.Logger
 }
 
 // NewHeartbeatService creates a new heartbeat service.
@@ -61,13 +60,7 @@ func NewHeartbeatService(client hubclient.RuntimeHostService, hostID string, int
 		hostID:   hostID,
 		interval: interval,
 		manager:  manager,
-		logger:   log.Default(),
 	}
-}
-
-// SetLogger sets the logger for the heartbeat service.
-func (s *HeartbeatService) SetLogger(logger *log.Logger) {
-	s.logger = logger
 }
 
 // SetVersion sets the host version reported in heartbeats.
@@ -124,9 +117,9 @@ func (s *HeartbeatService) run(ctx context.Context) {
 
 	// Send initial heartbeat immediately
 	if err := s.sendHeartbeat(ctx); err != nil {
-		s.logger.Printf("[Host:Heartbeat] Initial heartbeat failed: %v", err)
+		slog.Error("Initial heartbeat failed", "error", err)
 	} else {
-		s.logger.Printf("[Host:Heartbeat] Initial heartbeat sent to Hub")
+		slog.Info("Initial heartbeat sent to Hub")
 	}
 
 	ticker := time.NewTicker(s.interval)
@@ -136,13 +129,13 @@ func (s *HeartbeatService) run(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if err := s.sendHeartbeat(ctx); err != nil {
-				s.logger.Printf("[Host:Heartbeat] Failed to send heartbeat: %v", err)
+				slog.Error("Failed to send heartbeat", "error", err)
 			}
 		case <-s.stopCh:
-			s.logger.Printf("[Host:Heartbeat] Service stopping")
+			slog.Info("Heartbeat service stopping")
 			return
 		case <-ctx.Done():
-			s.logger.Printf("[Host:Heartbeat] Context cancelled")
+			slog.Info("Heartbeat service context cancelled")
 			return
 		}
 	}
@@ -182,7 +175,7 @@ func (s *HeartbeatService) gatherGroveAgents() []hubclient.GroveHeartbeat {
 	// List all agents managed by this host
 	agents, err := s.manager.List(context.Background(), nil)
 	if err != nil {
-		s.logger.Printf("[Host:Heartbeat] Failed to list agents: %v", err)
+		slog.Error("Failed to list agents for heartbeat", "error", err)
 		return nil
 	}
 

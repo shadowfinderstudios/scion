@@ -3,7 +3,7 @@ package hub
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -66,33 +66,34 @@ func NewLogAuditLogger(prefix string, debug bool) *LogAuditLogger {
 
 // LogHostAuthEvent logs a host authentication event to the standard logger.
 func (l *LogAuditLogger) LogHostAuthEvent(ctx context.Context, event *HostAuthEvent) error {
-	var status string
-	if event.Success {
-		status = "SUCCESS"
-	} else {
-		status = "FAILURE"
+	level := slog.LevelInfo
+	if !event.Success {
+		level = slog.LevelWarn
 	}
 
-	msg := "%s %s: %s host=%s ip=%s"
-	args := []interface{}{l.prefix, event.EventType, status, event.HostID, event.IPAddress}
+	attrs := []slog.Attr{
+		slog.String("event_type", string(event.EventType)),
+		slog.Bool("success", event.Success),
+		slog.String("host_id", event.HostID),
+		slog.String("ip_address", event.IPAddress),
+	}
 
 	if event.FailReason != "" {
-		msg += " reason=%q"
-		args = append(args, event.FailReason)
+		attrs = append(attrs, slog.String("fail_reason", event.FailReason))
 	}
 
 	if event.ActorID != "" {
-		msg += " actor=%s(%s)"
-		args = append(args, event.ActorType, event.ActorID)
+		attrs = append(attrs, slog.String("actor_id", event.ActorID))
+		attrs = append(attrs, slog.String("actor_type", event.ActorType))
 	}
-
-	log.Printf(msg, args...)
 
 	if l.debug && len(event.Details) > 0 {
 		for k, v := range event.Details {
-			log.Printf("%s   detail: %s=%s", l.prefix, k, v)
+			attrs = append(attrs, slog.String(k, v))
 		}
 	}
+
+	slog.LogAttrs(ctx, level, "Host auth audit event", attrs...)
 
 	return nil
 }

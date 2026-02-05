@@ -2,7 +2,7 @@ package hub
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -283,7 +283,7 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(req.RedirectURI, "github") {
 			provider = "github"
 		}
-		log.Printf("[Hub:Auth] Provider not specified in request, inferred as %q from redirect URI", provider)
+		slog.Debug("OAuth provider inferred from redirect URI", "provider", provider)
 	}
 
 	// Validate provider is a known value
@@ -312,7 +312,7 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userInfo, err := s.oauthService.ExchangeCodeForClient(ctx, oauthClientType, provider, req.Code, req.RedirectURI)
 	if err != nil {
-		log.Printf("[Hub:Auth] OAuth code exchange failed for provider %s: %v", provider, err)
+		slog.Error("OAuth code exchange failed", "provider", provider, "error", err)
 		writeError(w, http.StatusBadRequest, "oauth_error",
 			"failed to exchange authorization code", nil)
 		return
@@ -648,8 +648,8 @@ func (s *Server) handleCLIAuthAuthorize(w http.ResponseWriter, r *http.Request) 
 	// Check if OAuth service is configured
 	if s.oauthService == nil {
 		if s.config.Debug {
-			log.Printf("[Hub] CLI auth authorize request for provider %q failed: OAuth service is nil", provider)
-			log.Printf("[Hub] Check environment variables SCION_SERVER_OAUTH_CLI_*_CLIENTID/CLIENTSECRET")
+			slog.Debug("CLI auth authorize request failed: OAuth service is nil", "provider", provider)
+			slog.Debug("Check environment variables SCION_SERVER_OAUTH_CLI_*_CLIENTID/CLIENTSECRET")
 		}
 		writeError(w, http.StatusNotImplemented, "not_implemented",
 			"OAuth is not configured on this server", nil)
@@ -707,7 +707,7 @@ func (s *Server) handleCLIAuthToken(w http.ResponseWriter, r *http.Request) {
 	// Check if OAuth service is configured
 	if s.oauthService == nil {
 		if s.config.Debug {
-			log.Printf("[Hub] CLI auth token exchange for provider %q failed: OAuth service is nil", provider)
+			slog.Debug("CLI auth token exchange failed: OAuth service is nil", "provider", provider)
 		}
 		writeError(w, http.StatusNotImplemented, "not_implemented",
 			"OAuth is not configured on this server", nil)
@@ -718,7 +718,7 @@ func (s *Server) handleCLIAuthToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userInfo, err := s.oauthService.ExchangeCodeForClient(ctx, OAuthClientTypeCLI, provider, req.Code, req.CallbackURL)
 	if err != nil {
-		log.Printf("[Hub:Auth] CLI OAuth code exchange failed for provider %s: %v", provider, err)
+		slog.Error("CLI OAuth code exchange failed", "provider", provider, "error", err)
 		writeError(w, http.StatusBadRequest, "oauth_error",
 			"failed to exchange authorization code", nil)
 		return

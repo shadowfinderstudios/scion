@@ -2,7 +2,7 @@ package hub
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -52,7 +52,7 @@ func DevAuthMiddlewareWithDebug(validToken string, debug bool) func(http.Handler
 			// Check if already authenticated by agent token middleware
 			if GetAgentFromContext(r.Context()) != nil {
 				if debug {
-					log.Printf("[Hub] Auth success: agent token already validated")
+					slog.Debug("Auth success: agent token already validated")
 				}
 				next.ServeHTTP(w, r)
 				return
@@ -63,7 +63,7 @@ func DevAuthMiddlewareWithDebug(validToken string, debug bool) func(http.Handler
 			if r.Header.Get("X-Scion-Agent-Token") != "" {
 				// Agent token was present but not validated - reject
 				if debug {
-					log.Printf("[Hub] Auth failed: X-Scion-Agent-Token present but not validated")
+					slog.Debug("Auth failed: X-Scion-Agent-Token present but not validated")
 				}
 				writeError(w, http.StatusUnauthorized, ErrCodeUnauthorized,
 					"invalid agent token", nil)
@@ -74,7 +74,10 @@ func DevAuthMiddlewareWithDebug(validToken string, debug bool) func(http.Handler
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				if debug {
-					log.Printf("[Hub] Auth failed: missing Authorization header for %s %s", r.Method, r.URL.Path)
+					slog.Debug("Auth failed: missing Authorization header",
+						"method", r.Method,
+						"path", r.URL.Path,
+					)
 				}
 				writeError(w, http.StatusUnauthorized, ErrCodeUnauthorized,
 					"missing authorization header", nil)
@@ -84,7 +87,7 @@ func DevAuthMiddlewareWithDebug(validToken string, debug bool) func(http.Handler
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
 				if debug {
-					log.Printf("[Hub] Auth failed: invalid Authorization header format (expected 'Bearer <token>')")
+					slog.Debug("Auth failed: invalid Authorization header format (expected 'Bearer <token>')")
 				}
 				writeError(w, http.StatusUnauthorized, ErrCodeUnauthorized,
 					"invalid authorization header format", nil)
@@ -105,7 +108,10 @@ func DevAuthMiddlewareWithDebug(validToken string, debug bool) func(http.Handler
 					if len(expectedPrefix) > 20 {
 						expectedPrefix = expectedPrefix[:20] + "..."
 					}
-					log.Printf("[Hub] Auth failed: token mismatch (provided: %s, expected: %s)", tokenPrefix, expectedPrefix)
+					slog.Debug("Auth failed: token mismatch",
+						"provided_prefix", tokenPrefix,
+						"expected_prefix", expectedPrefix,
+					)
 				}
 				writeError(w, http.StatusUnauthorized, ErrCodeUnauthorized,
 					"invalid token", nil)
@@ -113,7 +119,7 @@ func DevAuthMiddlewareWithDebug(validToken string, debug bool) func(http.Handler
 			}
 
 			if debug {
-				log.Printf("[Hub] Auth success: dev-user authenticated")
+				slog.Debug("Auth success: dev-user authenticated")
 			}
 
 			// Add dev user context

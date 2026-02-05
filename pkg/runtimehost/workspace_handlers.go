@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -107,8 +107,11 @@ func (s *Server) handleWorkspaceUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.config.Debug {
-		log.Printf("[Host] Workspace upload requested for agent %s to %s/%s",
-			req.AgentID, bucket, req.StoragePath)
+		slog.Debug("Workspace upload requested",
+			"agentID", req.AgentID,
+			"bucket", bucket,
+			"storagePath", req.StoragePath,
+		)
 	}
 
 	// Get the container's workspace path
@@ -155,8 +158,10 @@ func (s *Server) handleWorkspaceUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.config.Debug {
-		log.Printf("[Host] Workspace upload complete: %d files, %d bytes",
-			resp.UploadedFiles, resp.UploadedBytes)
+		slog.Debug("Workspace upload complete",
+			"files", resp.UploadedFiles,
+			"bytes", resp.UploadedBytes,
+		)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -199,8 +204,11 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.config.Debug {
-		log.Printf("[Host] Workspace apply requested for agent %s from %s/%s",
-			req.AgentID, bucket, req.StoragePath)
+		slog.Debug("Workspace apply requested",
+			"agentID", req.AgentID,
+			"bucket", bucket,
+			"storagePath", req.StoragePath,
+		)
 	}
 
 	// Get the container's workspace path
@@ -227,7 +235,7 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 	if req.Manifest != nil && len(req.Manifest.Files) > 0 {
 		if err := s.applyFilePermissions(workspacePath, req.Manifest.Files); err != nil {
 			// Log but don't fail - permissions are optional
-			log.Printf("[Host] Warning: failed to apply file permissions: %v", err)
+			slog.Warn("Failed to apply file permissions", "error", err)
 		}
 		filesApplied = len(req.Manifest.Files)
 		for _, f := range req.Manifest.Files {
@@ -245,8 +253,10 @@ func (s *Server) handleWorkspaceApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.config.Debug {
-		log.Printf("[Host] Workspace apply complete: %d files, %d bytes",
-			resp.FilesApplied, resp.BytesTransferred)
+		slog.Debug("Workspace apply complete",
+			"files", resp.FilesApplied,
+			"bytes", resp.BytesTransferred,
+		)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

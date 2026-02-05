@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -70,7 +70,7 @@ func (s *Server) handleAgentAttach(w http.ResponseWriter, r *http.Request) {
 	// Upgrade to WebSocket
 	conn, err := ptyUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[PTY] WebSocket upgrade failed for agent %s: %v", agentID, err)
+		slog.Error("WebSocket upgrade failed for agent", "agentID", agentID, "error", err)
 		return
 	}
 	defer conn.Close()
@@ -85,15 +85,15 @@ func (s *Server) handleAgentAttach(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(rowStr, "%d", &rows)
 	}
 
-	log.Printf("[PTY] Attach session started for agent %s (container: %s)", agentID, containerID)
+	slog.Info("Attach session started", "agentID", agentID, "containerID", containerID)
 
 	// Start PTY session
 	session := newLocalPTYSession(ctx, agentID, containerID, conn, cols, rows)
 	if err := session.Run(); err != nil && err != io.EOF {
-		log.Printf("[PTY] Session error for agent %s: %v", agentID, err)
+		slog.Error("Attach session error", "agentID", agentID, "error", err)
 	}
 
-	log.Printf("[PTY] Attach session ended for agent %s", agentID)
+	slog.Info("Attach session ended", "agentID", agentID)
 }
 
 // extractAgentIDFromAttachPath extracts agent ID from /api/v1/agents/{id}/attach
@@ -289,7 +289,7 @@ func (s *LocalPTYSession) readFromWebSocket() error {
 			}
 			// Resize is handled by sending escape sequence to tmux
 			// For now, log it
-			log.Printf("[PTY] Resize: %dx%d", msg.Cols, msg.Rows)
+			slog.Debug("PTY Resize", "agentID", s.agentID, "cols", msg.Cols, "rows", msg.Rows)
 		}
 	}
 }
@@ -470,6 +470,6 @@ func (h *StreamPTYHandler) Close() {
 func (c *ControlChannelClient) handlePTYStreamWithAgent(handler *StreamHandler, cols, rows int, containerID string) {
 	ptyHandler := NewStreamPTYHandler(c, handler, containerID, cols, rows)
 	if err := ptyHandler.Run(); err != nil && err != io.EOF {
-		log.Printf("[PTY] Stream error for agent %s: %v", handler.agentID, err)
+		slog.Error("PTY stream error", "agentID", handler.agentID, "error", err)
 	}
 }

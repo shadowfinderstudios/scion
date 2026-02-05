@@ -2,7 +2,7 @@ package hub
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -66,13 +66,18 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 				} else if hasAuth {
 					authPrefix = authHeader
 				}
-				log.Printf("[Auth] %s %s - hasAuth=%v authPrefix=%q", r.Method, r.URL.Path, hasAuth, authPrefix)
+				slog.Debug("Auth check",
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+					slog.Bool("has_auth", hasAuth),
+					slog.String("auth_prefix", authPrefix),
+				)
 			}
 
 			// Skip auth for unauthenticated endpoints (health checks, CLI OAuth)
 			if isUnauthenticatedEndpoint(r.URL.Path) {
 				if cfg.Debug {
-					log.Printf("[Auth] Skipping auth for unauthenticated endpoint: %s", r.URL.Path)
+					slog.Debug("Skipping auth for unauthenticated endpoint", "path", r.URL.Path)
 				}
 				next.ServeHTTP(w, r)
 				return
@@ -85,7 +90,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 						ctx = context.WithValue(ctx, agentContextKey{}, claims)
 						ctx = contextWithIdentity(ctx, &agentIdentityWrapper{claims})
 						if cfg.Debug {
-							log.Printf("[Auth] Agent authenticated: %s", claims.Subject)
+							slog.Debug("Agent authenticated", "subject", claims.Subject)
 						}
 						next.ServeHTTP(w, r.WithContext(ctx))
 						return
@@ -103,7 +108,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 			// If present, pass through to HostAuthMiddleware which runs next
 			if hostID := r.Header.Get("X-Scion-Host-ID"); hostID != "" {
 				if cfg.Debug {
-					log.Printf("[Auth] Host auth headers present (hostID: %s), deferring to HostAuthMiddleware", hostID)
+					slog.Debug("Host auth headers present, deferring to HostAuthMiddleware", "hostID", hostID)
 				}
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -118,7 +123,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 						ctx = context.WithValue(ctx, userContextKey{}, user)
 						ctx = contextWithIdentity(ctx, user)
 						if cfg.Debug {
-							log.Printf("[Auth] Proxy user: %s", user.Email())
+							slog.Debug("Proxy user authenticated", "email", user.Email())
 						}
 						next.ServeHTTP(w, r.WithContext(ctx))
 						return
@@ -147,7 +152,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 				ctx = context.WithValue(ctx, userContextKey{}, devUser)
 				ctx = contextWithIdentity(ctx, devUser)
 				if cfg.Debug {
-					log.Printf("[Auth] Dev user authenticated")
+					slog.Debug("Dev user authenticated")
 				}
 
 			case tokenTypeAPIKey:
@@ -165,7 +170,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 				ctx = context.WithValue(ctx, userContextKey{}, user)
 				ctx = contextWithIdentity(ctx, user)
 				if cfg.Debug {
-					log.Printf("[Auth] API key authenticated: %s", user.Email())
+					slog.Debug("API key authenticated", "email", user.Email())
 				}
 
 			case tokenTypeUser:
@@ -176,7 +181,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 						ctx = context.WithValue(ctx, userContextKey{}, devUser)
 						ctx = contextWithIdentity(ctx, devUser)
 						if cfg.Debug {
-							log.Printf("[Auth] Dev user authenticated (fallback)")
+							slog.Debug("Dev user authenticated (fallback)")
 						}
 						next.ServeHTTP(w, r.WithContext(ctx))
 						return
@@ -201,7 +206,7 @@ func UnifiedAuthMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 				ctx = context.WithValue(ctx, userContextKey{}, user)
 				ctx = contextWithIdentity(ctx, user)
 				if cfg.Debug {
-					log.Printf("[Auth] User authenticated: %s", user.Email())
+					slog.Debug("User authenticated", "email", user.Email())
 				}
 
 			default:

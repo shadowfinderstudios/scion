@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +22,7 @@ import (
 	"github.com/ptone/scion-agent/pkg/hubclient"
 	"github.com/ptone/scion-agent/pkg/runtime"
 	"github.com/ptone/scion-agent/pkg/templatecache"
+	"github.com/ptone/scion-agent/pkg/util/logging"
 )
 
 // ServerConfig holds configuration for the Runtime Host API server.
@@ -163,7 +164,7 @@ func New(cfg ServerConfig, mgr agent.Manager, rt runtime.Runtime) *Server {
 	// Initialize Hub integration if enabled
 	if cfg.HubEnabled && cfg.HubEndpoint != "" {
 		if err := srv.initHubIntegration(); err != nil {
-			log.Printf("Warning: failed to initialize Hub integration: %v", err)
+			slog.Warn("Failed to initialize Hub integration", "error", err)
 		}
 	}
 
@@ -203,7 +204,7 @@ func (s *Server) initHubIntegration() error {
 		// Decode the secret key
 		secretKey, err = base64.StdEncoding.DecodeString(s.hostCredentials.SecretKey)
 		if err != nil {
-			log.Printf("Warning: failed to decode host secret key: %v", err)
+			slog.Warn("Failed to decode host secret key", "error", err)
 		}
 	}
 
@@ -213,7 +214,7 @@ func (s *Server) initHubIntegration() error {
 	if len(secretKey) > 0 && s.hostCredentials != nil {
 		// Use HMAC auth from credentials
 		opts = append(opts, hubclient.WithHMACAuth(s.hostCredentials.HostID, secretKey))
-		log.Printf("Hub client using HMAC authentication (hostID: %s)", s.hostCredentials.HostID)
+		slog.Info("Hub client using HMAC authentication", "hostID", s.hostCredentials.HostID)
 
 		// Update HostID from credentials if not already set
 		if s.config.HostID == "" {
@@ -222,11 +223,11 @@ func (s *Server) initHubIntegration() error {
 	} else if s.config.HubToken != "" {
 		// Fall back to bearer token
 		opts = append(opts, hubclient.WithBearerToken(s.config.HubToken))
-		log.Printf("Hub client using bearer token authentication")
+		slog.Info("Hub client using bearer token authentication")
 	} else {
 		// Try auto dev auth
 		opts = append(opts, hubclient.WithAutoDevAuth())
-		log.Printf("Hub client using auto dev authentication")
+		slog.Info("Hub client using auto dev authentication")
 	}
 
 	client, err := hubclient.New(s.config.HubEndpoint, opts...)
@@ -247,14 +248,17 @@ func (s *Server) initHubIntegration() error {
 			AllowUnauthenticated: !s.config.HostAuthStrictMode, // Configurable strict mode
 		})
 		if s.config.HostAuthStrictMode {
-			log.Printf("Host auth middleware enabled (strict mode - all requests must be authenticated)")
+			slog.Info("Host auth middleware enabled (strict mode)")
 		} else {
-			log.Printf("Host auth middleware enabled (permissive mode - unauthenticated requests allowed)")
+			slog.Info("Host auth middleware enabled (permissive mode)")
 		}
 	}
 
-	log.Printf("Hub integration initialized (endpoint: %s, cache: %s, max: %d MB)",
-		s.config.HubEndpoint, cacheDir, maxSize/(1024*1024))
+	slog.Info("Hub integration initialized",
+		"endpoint", s.config.HubEndpoint,
+		"cache", cacheDir,
+		"max_size_mb", maxSize/(1024*1024),
+	)
 
 	return nil
 }
@@ -278,7 +282,7 @@ func (s *Server) loadHostCredentials() error {
 
 	s.hostCredentials = creds
 	s.credentialsModTime = s.credentialsStore.ModTime()
-	log.Printf("Host credentials loaded (hostID: %s, hub: %s)", creds.HostID, creds.HubEndpoint)
+	slog.Info("Host credentials loaded", "hostID", creds.HostID, "hub", creds.HubEndpoint)
 	return nil
 }
 
@@ -320,20 +324,17 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 
-	log.Printf("Runtime Host API server starting on %s:%d (mode: %s)", s.config.Host, s.config.Port, s.config.Mode)
+	slog.Info("Runtime Host API server starting",
+		"host", s.config.Host,
+		"port", s.config.Port,
+		"mode", s.config.Mode,
+	)
 	if s.config.Debug {
-		log.Printf("[Host] Debug mode enabled")
-		log.Printf("[Host] HostID: %s, HostName: %s", s.config.HostID, s.config.HostName)
-		if s.config.HubEndpoint != "" {
-			log.Printf("[Host] Hub endpoint: %s", s.config.HubEndpoint)
-		} else {
-			log.Printf("[Host] Warning: No hub endpoint configured")
-		}
-		if s.config.HubEnabled {
-			log.Printf("[Host] Hub integration: enabled")
-		} else {
-			log.Printf("[Host] Hub integration: disabled")
-		}
+		slog.Debug("Host details",
+			"hostID", s.config.HostID,
+			"hostName", s.config.HostName,
+			"hub_endpoint", s.config.HubEndpoint,
+		)
 	}
 
 	// Check if we have valid host credentials for Hub communication
@@ -342,7 +343,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start heartbeat service if enabled and we have valid credentials
 	if s.config.HeartbeatEnabled && s.hubClient != nil && s.config.HostID != "" {
 		if !hasValidCredentials {
-			log.Printf("[Host:Heartbeat] Skipping: no valid host credentials (run 'scion hub register' first)")
+			slog.Warn("Skipping heartbeat: no valid host credentials (run 'scion hub register' first)")
 		} else {
 			interval := s.config.HeartbeatInterval
 			if interval <= 0 {
@@ -357,18 +358,18 @@ func (s *Server) Start(ctx context.Context) error {
 			)
 			s.heartbeat.SetVersion(s.version)
 			s.heartbeat.Start(ctx)
-			log.Printf("[Host:Heartbeat] Started (interval: %s)", interval)
+			slog.Info("Heartbeat service started", "interval", interval)
 		}
 	}
 
 	// Start control channel if enabled and we have valid credentials
 	if s.config.ControlChannelEnabled && s.config.HubEndpoint != "" && s.config.HostID != "" {
 		if !hasValidCredentials {
-			log.Printf("[Host:ControlChannel] Skipping: no valid host credentials (run 'scion hub register' first)")
+			slog.Warn("Skipping control channel: no valid host credentials (run 'scion hub register' first)")
 		} else {
 			secretKey, err := base64.StdEncoding.DecodeString(s.hostCredentials.SecretKey)
 			if err != nil {
-				log.Printf("[Host:ControlChannel] Failed to decode secret key: %v", err)
+				slog.Error("Failed to decode secret key", "error", err)
 			} else {
 				ccConfig := ControlChannelConfig{
 					HubEndpoint:         s.config.HubEndpoint,
@@ -387,10 +388,10 @@ func (s *Server) Start(ctx context.Context) error {
 				s.controlChannel = NewControlChannelClient(ccConfig, s.Handler())
 				go func() {
 					if err := s.controlChannel.Connect(ctx); err != nil {
-						log.Printf("[Host:ControlChannel] Error: %v", err)
+						slog.Error("Control channel error", "error", err)
 					}
 				}()
-				log.Printf("[Host:ControlChannel] Connecting to Hub at %s", s.config.HubEndpoint)
+				slog.Info("Connecting to Hub control channel", "endpoint", s.config.HubEndpoint)
 			}
 		}
 	}
@@ -427,19 +428,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	// Stop credential watcher
 	if credWatcherStop != nil {
-		log.Println("Stopping credential watcher...")
+		slog.Info("Stopping credential watcher...")
 		close(credWatcherStop)
 	}
 
 	// Stop control channel first
 	if cc != nil {
-		log.Println("Stopping control channel...")
+		slog.Info("Stopping control channel...")
 		cc.Close()
 	}
 
 	// Stop heartbeat service
 	if hb != nil {
-		log.Println("Stopping heartbeat service...")
+		slog.Info("Stopping heartbeat service...")
 		hb.Stop()
 	}
 
@@ -447,7 +448,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
-	log.Println("Runtime Host API server shutting down...")
+	slog.Info("Runtime Host API server shutting down...")
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -465,13 +466,13 @@ func (s *Server) Handler() http.Handler {
 // When credentials change, it reinitializes the Hub client and restarts services.
 func (s *Server) startCredentialWatcher(ctx context.Context) {
 	if s.credentialsStore == nil {
-		log.Printf("[Host:CredWatcher] No credentials store configured, skipping watcher")
+		slog.Warn("No credentials store configured, skipping watcher")
 		return
 	}
 
 	s.credWatcherStop = make(chan struct{})
 	go s.credentialWatchLoop(ctx)
-	log.Printf("[Host:CredWatcher] Started (checking every 10s)")
+	slog.Info("Credential watcher started", "interval", "10s")
 }
 
 // credentialWatchLoop is the main credential watching loop.
@@ -487,7 +488,7 @@ func (s *Server) credentialWatchLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := s.checkAndReloadCredentials(ctx); err != nil {
-				log.Printf("[Host:CredWatcher] Error checking credentials: %v", err)
+				slog.Error("Error checking credentials", "error", err)
 			}
 		}
 	}
@@ -508,7 +509,7 @@ func (s *Server) checkAndReloadCredentials(ctx context.Context) error {
 		return nil // No change
 	}
 
-	log.Printf("[Host:CredWatcher] Credentials changed, reloading (new hostID: %s)", creds.HostID)
+	slog.Info("Credentials changed, reloading", "hostID", creds.HostID)
 
 	s.mu.Lock()
 	oldCredentials := s.hostCredentials
@@ -522,10 +523,10 @@ func (s *Server) checkAndReloadCredentials(ctx context.Context) error {
 
 	if hostIDChanged || secretKeyChanged {
 		if err := s.reinitializeHubServices(ctx, creds); err != nil {
-			log.Printf("[Host:CredWatcher] Failed to reinitialize services: %v", err)
+			slog.Error("Failed to reinitialize services", "error", err)
 			return err
 		}
-		log.Printf("[Host:CredWatcher] Services reinitialized with new credentials")
+		slog.Info("Services reinitialized with new credentials")
 	}
 
 	return nil
@@ -542,12 +543,12 @@ func (s *Server) reinitializeHubServices(ctx context.Context, creds *hostcredent
 	// Stop existing services
 	s.mu.Lock()
 	if s.controlChannel != nil {
-		log.Printf("[Host:CredWatcher] Stopping control channel for reload")
+		slog.Info("Stopping control channel for reload")
 		s.controlChannel.Close()
 		s.controlChannel = nil
 	}
 	if s.heartbeat != nil {
-		log.Printf("[Host:CredWatcher] Stopping heartbeat for reload")
+		slog.Info("Stopping heartbeat for reload")
 		s.heartbeat.Stop()
 		s.heartbeat = nil
 	}
@@ -568,7 +569,7 @@ func (s *Server) reinitializeHubServices(ctx context.Context, creds *hostcredent
 	if s.cache != nil {
 		s.hydrator = templatecache.NewHydrator(s.cache, client)
 	}
-	log.Printf("[Host:CredWatcher] Hub client reinitialized with HMAC auth (hostID: %s)", creds.HostID)
+	slog.Info("Hub client reinitialized with HMAC auth", "hostID", creds.HostID)
 	s.mu.Unlock()
 
 	// Restart heartbeat if enabled
@@ -588,7 +589,7 @@ func (s *Server) reinitializeHubServices(ctx context.Context, creds *hostcredent
 		s.heartbeat.SetVersion(s.version)
 		s.heartbeat.Start(ctx)
 		s.mu.Unlock()
-		log.Printf("[Host:CredWatcher] Heartbeat restarted (interval: %s)", interval)
+		slog.Info("Heartbeat restarted", "interval", interval)
 	}
 
 	// Restart control channel if enabled
@@ -613,10 +614,10 @@ func (s *Server) reinitializeHubServices(ctx context.Context, creds *hostcredent
 
 		go func() {
 			if err := s.controlChannel.Connect(ctx); err != nil {
-				log.Printf("[Host:ControlChannel] Error after reload: %v", err)
+				slog.Error("Control channel error after reload", "error", err)
 			}
 		}()
-		log.Printf("[Host:CredWatcher] Control channel restarted")
+		slog.Info("Control channel restarted")
 	}
 
 	return nil
@@ -696,29 +697,46 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
+		// Extract contextual metadata for logging
+		traceID := r.Header.Get("X-Cloud-Trace-Context")
+		if traceID == "" {
+			traceID = r.Header.Get("X-Trace-ID")
+		}
+
+		attrs := []slog.Attr{
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("remote_addr", r.RemoteAddr),
+		}
+		if traceID != "" {
+			attrs = append(attrs, slog.String(logging.AttrTraceID, traceID))
+		}
+
 		if s.config.Debug {
-			log.Printf("[Host] --> %s %s (from %s)", r.Method, r.URL.Path, r.RemoteAddr)
-			if r.URL.RawQuery != "" {
-				log.Printf("[Host]     query: %s", r.URL.RawQuery)
-			}
-			for name, values := range r.Header {
-				if name == "Authorization" {
-					log.Printf("[Host]     header: %s: [REDACTED]", name)
-				} else {
-					log.Printf("[Host]     header: %s: %s", name, strings.Join(values, ", "))
-				}
-			}
+			slog.Debug("Incoming request",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.String("remote_addr", r.RemoteAddr),
+				slog.String("query", r.URL.RawQuery),
+			)
 		}
 
 		next.ServeHTTP(wrapped, r)
 
-		if s.config.Debug {
-			log.Printf("[Host] <-- %s %s %d (%s)",
-				r.Method, r.URL.Path, wrapped.statusCode, time.Since(start))
-		} else {
-			log.Printf("[Host] %s %s %d %s",
-				r.Method, r.URL.Path, wrapped.statusCode, time.Since(start))
+		duration := time.Since(start)
+		level := slog.LevelInfo
+		if wrapped.statusCode >= 500 {
+			level = slog.LevelError
+		} else if wrapped.statusCode >= 400 {
+			level = slog.LevelWarn
 		}
+
+		slog.LogAttrs(r.Context(), level, "Request completed",
+			append(attrs,
+				slog.Int("status", wrapped.statusCode),
+				slog.Duration("duration", duration),
+			)...,
+		)
 	})
 }
 
@@ -727,7 +745,10 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("panic recovered: %v", err)
+				slog.Error("Panic recovered",
+					slog.Any("error", err),
+					slog.String("path", r.URL.Path),
+				)
 				InternalError(w)
 			}
 		}()

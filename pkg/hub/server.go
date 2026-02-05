@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/ptone/scion-agent/pkg/storage"
 	"github.com/ptone/scion-agent/pkg/store"
+	"github.com/ptone/scion-agent/pkg/util/logging"
 )
 
 const (
@@ -237,7 +238,7 @@ func New(cfg ServerConfig, s store.Store) *Server {
 	}
 	tokenService, err := NewAgentTokenService(cfg.AgentTokenConfig)
 	if err != nil {
-		log.Printf("[Hub] Warning: failed to initialize agent token service: %v", err)
+		slog.Warn("Failed to initialize agent token service", "error", err)
 	} else {
 		srv.agentTokenService = tokenService
 	}
@@ -249,7 +250,7 @@ func New(cfg ServerConfig, s store.Store) *Server {
 	}
 	userTokenService, err := NewUserTokenService(cfg.UserTokenConfig)
 	if err != nil {
-		log.Printf("[Hub] Warning: failed to initialize user token service: %v", err)
+		slog.Warn("Failed to initialize user token service", "error", err)
 	} else {
 		srv.userTokenService = userTokenService
 	}
@@ -262,21 +263,18 @@ func New(cfg ServerConfig, s store.Store) *Server {
 	// Initialize OAuth service if configured
 	if cfg.OAuthConfig.IsConfigured() {
 		srv.oauthService = NewOAuthService(cfg.OAuthConfig)
-		log.Printf("[Hub] OAuth service initialized")
+		slog.Info("OAuth service initialized")
 		// Log which providers are configured
 		logOAuthProviders("Web", cfg.OAuthConfig.Web)
 		logOAuthProviders("CLI", cfg.OAuthConfig.CLI)
 	} else {
-		log.Printf("[Hub] OAuth service NOT configured - no providers available")
-		log.Printf("[Hub] To enable OAuth, set environment variables:")
-		log.Printf("[Hub]   SCION_SERVER_OAUTH_CLI_GOOGLE_CLIENTID")
-		log.Printf("[Hub]   SCION_SERVER_OAUTH_CLI_GOOGLE_CLIENTSECRET")
-		log.Printf("[Hub]   (or use server.yaml configuration)")
+		slog.Info("OAuth service NOT configured - no providers available")
+		slog.Info("To enable OAuth, set environment variables SCION_SERVER_OAUTH_CLI_GOOGLE_CLIENTID, etc.")
 	}
 
 	// Log authorized domains if configured
 	if len(cfg.AuthorizedDomains) > 0 {
-		log.Printf("[Hub] Authorized domains: %s", strings.Join(cfg.AuthorizedDomains, ", "))
+		slog.Info("Authorized domains", "domains", strings.Join(cfg.AuthorizedDomains, ", "))
 	}
 
 	// Initialize host auth service if enabled
@@ -284,7 +282,7 @@ func New(cfg ServerConfig, s store.Store) *Server {
 		srv.hostAuthService = NewHostAuthService(cfg.HostAuthConfig, s)
 		srv.auditLogger = NewLogAuditLogger("[Hub Audit]", cfg.Debug)
 		srv.metrics = NewHostAuthMetrics()
-		log.Printf("[Hub] Host HMAC authentication enabled")
+		slog.Info("Host HMAC authentication enabled")
 	}
 
 	// Initialize control channel manager
@@ -296,7 +294,7 @@ func New(cfg ServerConfig, s store.Store) *Server {
 		RequestTimeout: 120 * time.Second,
 		Debug:          cfg.Debug,
 	})
-	log.Printf("[Hub] Control channel manager initialized")
+	slog.Info("Control channel manager initialized")
 
 	// Build unified auth configuration
 	srv.authConfig = AuthConfig{
@@ -326,7 +324,7 @@ func (s *Server) ensureSigningKey(ctx context.Context, keyName string, existingK
 	// Try to load from store
 	val, err := s.store.GetSecretValue(ctx, keyName, store.ScopeHub, "hub")
 	if err == nil {
-		log.Printf("[Hub] Loaded existing signing key from store: %s", keyName)
+		slog.Info("Loaded existing signing key from store", "key", keyName)
 		return base64.StdEncoding.DecodeString(val)
 	}
 
@@ -352,9 +350,9 @@ func (s *Server) ensureSigningKey(ctx context.Context, keyName string, existingK
 
 	if _, err := s.store.UpsertSecret(ctx, secret); err != nil {
 		// Log warning but continue - we will have a random key for this session
-		log.Printf("[Hub] Warning: failed to persist signing key %s: %v", keyName, err)
+		slog.Warn("Failed to persist signing key", "key", keyName, "error", err)
 	} else {
-		log.Printf("[Hub] Persisted new signing key: %s", keyName)
+		slog.Info("Persisted new signing key", "key", keyName)
 	}
 
 	return newKey, nil
@@ -473,18 +471,18 @@ func (s *Server) CreateAuthenticatedDispatcher() *HTTPAgentDispatcher {
 	if s.agentTokenService != nil {
 		dispatcher.SetTokenGenerator(s)
 	} else if s.config.Debug {
-		log.Printf("[Hub] Warning: No agent token service configured - agents won't have Hub credentials")
+		slog.Warn("No agent token service configured - agents won't have Hub credentials")
 	}
 
 	// Set Hub endpoint if configured
 	if s.config.HubEndpoint != "" {
 		dispatcher.SetHubEndpoint(s.config.HubEndpoint)
 		if s.config.Debug {
-			log.Printf("[Hub] Dispatcher hub endpoint: %s", s.config.HubEndpoint)
+			slog.Debug("Dispatcher hub endpoint configured", "endpoint", s.config.HubEndpoint)
 		}
 	} else if s.config.Debug {
-		log.Printf("[Hub] Warning: No hub.endpoint configured - agents won't know how to reach Hub")
-		log.Printf("[Hub] Configure via: hub.endpoint in server.yaml or SCION_SERVER_HUB_ENDPOINT env var")
+		slog.Warn("No hub.endpoint configured - agents won't know how to reach Hub")
+		slog.Info("Configure via: hub.endpoint in server.yaml or SCION_SERVER_HUB_ENDPOINT env var")
 	}
 
 	return dispatcher
@@ -519,7 +517,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 
-	log.Printf("Hub API server starting on %s:%d", s.config.Host, s.config.Port)
+	slog.Info("Hub API server starting", "host", s.config.Host, "port", s.config.Port)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -548,7 +546,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
-	log.Println("Hub API server shutting down...")
+	slog.Info("Hub API server shutting down...")
 
 	// Shutdown control channel first
 	if cc != nil {
@@ -695,29 +693,47 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
+		// Extract contextual metadata for logging
+		// In the future, this could extract trace IDs from headers
+		traceID := r.Header.Get("X-Cloud-Trace-Context")
+		if traceID == "" {
+			traceID = r.Header.Get("X-Trace-ID")
+		}
+
+		attrs := []slog.Attr{
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("remote_addr", r.RemoteAddr),
+		}
+		if traceID != "" {
+			attrs = append(attrs, slog.String(logging.AttrTraceID, traceID))
+		}
+
 		if s.config.Debug {
-			log.Printf("[Hub] --> %s %s (from %s)", r.Method, r.URL.Path, r.RemoteAddr)
-			if r.URL.RawQuery != "" {
-				log.Printf("[Hub]     query: %s", r.URL.RawQuery)
-			}
-			for name, values := range r.Header {
-				if name == "Authorization" {
-					log.Printf("[Hub]     header: %s: [REDACTED]", name)
-				} else {
-					log.Printf("[Hub]     header: %s: %s", name, strings.Join(values, ", "))
-				}
-			}
+			slog.Debug("Incoming request",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.String("remote_addr", r.RemoteAddr),
+				slog.String("query", r.URL.RawQuery),
+			)
 		}
 
 		next.ServeHTTP(wrapped, r)
 
-		if s.config.Debug {
-			log.Printf("[Hub] <-- %s %s %d (%s)",
-				r.Method, r.URL.Path, wrapped.statusCode, time.Since(start))
-		} else {
-			log.Printf("%s %s %d %s",
-				r.Method, r.URL.Path, wrapped.statusCode, time.Since(start))
+		duration := time.Since(start)
+		level := slog.LevelInfo
+		if wrapped.statusCode >= 500 {
+			level = slog.LevelError
+		} else if wrapped.statusCode >= 400 {
+			level = slog.LevelWarn
 		}
+
+		slog.LogAttrs(r.Context(), level, "Request completed",
+			append(attrs,
+				slog.Int("status", wrapped.statusCode),
+				slog.Duration("duration", duration),
+			)...,
+		)
 	})
 }
 
@@ -726,7 +742,10 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("panic recovered: %v", err)
+				slog.Error("Panic recovered",
+					slog.Any("error", err),
+					slog.String("path", r.URL.Path),
+				)
 				InternalError(w)
 			}
 		}()
@@ -774,9 +793,9 @@ func logOAuthProviders(clientType string, cfg OAuthClientConfig) {
 		if githubConfigured {
 			providers = append(providers, "GitHub")
 		}
-		log.Printf("[Hub]   %s OAuth: %s", clientType, strings.Join(providers, ", "))
+		slog.Info("OAuth providers configured", "client", clientType, "providers", providers)
 	} else {
-		log.Printf("[Hub]   %s OAuth: none configured", clientType)
+		slog.Info("No OAuth providers configured", "client", clientType)
 	}
 }
 
@@ -850,14 +869,14 @@ func (s *Server) handleRuntimeHostConnect(w http.ResponseWriter, r *http.Request
 		// For WebSocket, we need to verify HMAC on the upgrade request
 		_, err := s.hostAuthService.ValidateHostSignature(r.Context(), r)
 		if err != nil {
-			log.Printf("[ControlChannel] HMAC validation failed for host %s: %v", hostID, err)
+			slog.Error("HMAC validation failed for host", "hostID", hostID, "error", err)
 			writeError(w, 401, ErrCodeHostAuthFailed, "Invalid host signature", nil)
 			return
 		}
 
 		// Use the host ID from header
 		if err := s.controlChannel.HandleUpgrade(w, r, hostID); err != nil {
-			log.Printf("[ControlChannel] Upgrade failed for host %s: %v", hostID, err)
+			slog.Error("Upgrade failed for host", "hostID", hostID, "error", err)
 			// Error already written by upgrader
 		}
 		return
@@ -865,7 +884,7 @@ func (s *Server) handleRuntimeHostConnect(w http.ResponseWriter, r *http.Request
 
 	// Use authenticated host identity
 	if err := s.controlChannel.HandleUpgrade(w, r, host.ID()); err != nil {
-		log.Printf("[ControlChannel] Upgrade failed for host %s: %v", host.ID(), err)
+		slog.Error("Upgrade failed for host", "hostID", host.ID(), "error", err)
 		// Error already written by upgrader
 	}
 }

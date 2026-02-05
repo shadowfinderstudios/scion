@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -102,7 +102,7 @@ func (s *Server) handleAgentPTY(w http.ResponseWriter, r *http.Request) {
 	// Upgrade to WebSocket
 	conn, err := ptyUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[PTY] WebSocket upgrade failed for agent %s: %v", agentID, err)
+		slog.Error("WebSocket upgrade failed for agent", "agentID", agentID, "error", err)
 		return
 	}
 
@@ -110,14 +110,14 @@ func (s *Server) handleAgentPTY(w http.ResponseWriter, r *http.Request) {
 	session := newPTYSession(ctx, agentID, agent.RuntimeHostID, conn, s.controlChannel)
 	defer session.Close()
 
-	log.Printf("[PTY] Session started for agent %s (user: %s)", agentID, identity.ID())
+	slog.Info("PTY session started", "agentID", agentID, "user", identity.ID())
 
 	// Run the session
 	if err := session.Run(); err != nil && err != io.EOF {
-		log.Printf("[PTY] Session error for agent %s: %v", agentID, err)
+		slog.Error("PTY session error", "agentID", agentID, "error", err)
 	}
 
-	log.Printf("[PTY] Session ended for agent %s", agentID)
+	slog.Info("PTY session ended", "agentID", agentID)
 }
 
 // extractAgentIDFromPTYPath extracts the agent ID from a PTY path.
@@ -254,7 +254,7 @@ func (s *PTYSession) readFromClient() error {
 			}
 			// Forward resize to host
 			// TODO: Implement resize handling in stream protocol
-			log.Printf("[PTY] Resize: %dx%d", msg.Cols, msg.Rows)
+			slog.Debug("PTY Resize", "agentID", s.agentID, "cols", msg.Cols, "rows", msg.Rows)
 		}
 	}
 }
