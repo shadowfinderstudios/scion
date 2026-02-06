@@ -6,20 +6,19 @@ steps:
     args:
       - 'build'
       - '-t'
-      - '$_REGISTRY/docs-site:$SHORT_SHA'
+      - '$_REGISTRY/docs-site:$_GIT_SHA'
       - '-t'
       - '$_REGISTRY/docs-site:latest'
       - '-f'
       - 'Dockerfile'
       - '.'
-    dir: 'docs-site'
 
   # 2. Push the container image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push-docs-image-sha'
     args:
       - 'push'
-      - '$_REGISTRY/docs-site:$SHORT_SHA'
+      - '$_REGISTRY/docs-site:$_GIT_SHA'
 
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push-docs-image-latest'
@@ -36,7 +35,7 @@ steps:
       - 'deploy'
       - '$_SERVICE_NAME'
       - '--image'
-      - '$_REGISTRY/docs-site:$SHORT_SHA'
+      - '$_REGISTRY/docs-site:$_GIT_SHA'
       - '--region'
       - '$_REGION'
       - '--platform'
@@ -44,9 +43,10 @@ steps:
       - '--allow-unauthenticated'
 
 substitutions:
-  _REGISTRY: 'us-central1-docker.pkg.dev/${PROJECT_ID}/public-docker'
+  _REGISTRY: 'us-west1-docker.pkg.dev/${PROJECT_ID}/scion-images'
   _SERVICE_NAME: 'scion-docs'
   _REGION: 'us-central1'
+  _GIT_SHA: 'latest'
 
 options:
   dynamicSubstitutions: true

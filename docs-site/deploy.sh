@@ -11,15 +11,14 @@ echo "Project ID: $PROJECT_ID"
 echo "Region:     $REGION"
 echo "Service:    $SERVICE_NAME"
 
-# Get the directory where the script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# Go to the repo root to run the build
-cd "$SCRIPT_DIR/.."
-
 # Submit to Cloud Build
 # We pass the project explicitly to gcloud
-gcloud builds submit 
-  --project "$PROJECT_ID" 
-  --config docs-site/cloudbuild.yaml 
-  --substitutions="_SERVICE_NAME=$SERVICE_NAME,_REGION=$REGION" 
+# We calculate a short SHA for tagging if in a git repo
+GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
+
+gcloud builds submit \
+  --async \
+  --project "$PROJECT_ID" \
+  --config cloudbuild.yaml \
+  --substitutions="_SERVICE_NAME=$SERVICE_NAME,_REGION=$REGION,_GIT_SHA=$GIT_SHA" \
   .

@@ -58,8 +58,10 @@ docker run -p 8080:8080 scion-docs
 To build and deploy using Google Cloud Build:
 
 ```bash
-# From the project root
-gcloud builds submit --config docs-site/cloudbuild.yaml .
+# From the docs-site directory
+gcloud builds submit --config cloudbuild.yaml .
+# Or use the provided script
+./deploy.sh
 ```
 
 The Cloud Build configuration:

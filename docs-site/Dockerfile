@@ -5,6 +5,7 @@ FROM node:20-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    make \
     && curl -fsSL https://d2lang.com/install.sh | sh -s -- \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
