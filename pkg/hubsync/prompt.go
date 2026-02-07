@@ -304,3 +304,12 @@ func ShowLinkBeforeRegisterPrompt(groveName string, autoConfirm bool) bool {
 	fmt.Printf("Grove '%s' is not linked to the Hub.\n", groveName)
 	return ConfirmAction("Link it first?", true, autoConfirm)
 }
+
+// ShowGroveContributorPrompt asks if user wants to add the broker as a contributor to the grove.
+// Returns true if the user confirms, false otherwise.
+func ShowGroveContributorPrompt(groveName string, autoConfirm bool) bool {
+	fmt.Println()
+	fmt.Printf("Add this broker as a contributor to grove '%s'?\n", groveName)
+	fmt.Println("This will allow the broker to execute agents for this grove.")
+	return ConfirmAction("Continue?", true, autoConfirm)
+}

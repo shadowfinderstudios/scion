@@ -830,23 +830,25 @@ func runHubRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// If grove is linked, add this broker as a contributor
+	// If grove is linked, offer to add this broker as a contributor
 	if groveID != "" && settings.IsHubEnabled() {
-		req := &hubclient.RegisterGroveRequest{
-			ID:       groveID,
-			Name:     groveName,
-			Path:     resolvedPath,
-			BrokerID: brokerID,
-		}
-		if !isGlobal {
-			req.GitRemote = util.NormalizeGitRemote(util.GetGitRemote())
-		}
+		if hubsync.ShowGroveContributorPrompt(groveName, autoConfirm) {
+			req := &hubclient.RegisterGroveRequest{
+				ID:       groveID,
+				Name:     groveName,
+				Path:     resolvedPath,
+				BrokerID: brokerID,
+			}
+			if !isGlobal {
+				req.GitRemote = util.NormalizeGitRemote(util.GetGitRemote())
+			}
 
-		resp, err := client.Groves().Register(ctx, req)
-		if err != nil {
-			fmt.Printf("Warning: failed to add broker to grove: %v\n", err)
-		} else {
-			fmt.Printf("Broker added as contributor to grove '%s'\n", resp.Grove.Name)
+			resp, err := client.Groves().Register(ctx, req)
+			if err != nil {
+				fmt.Printf("Warning: failed to add broker to grove: %v\n", err)
+			} else {
+				fmt.Printf("Broker added as contributor to grove '%s'\n", resp.Grove.Name)
+			}
 		}
 	}
 
