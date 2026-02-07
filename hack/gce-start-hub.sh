@@ -9,6 +9,22 @@ PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 DOMAIN="hub.demo.scion-ai.dev"
 REPO_DIR="/home/scion/scion-agent"
 SCION_BIN="/usr/local/bin/scion"
+RESET_DB=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --reset-db)
+            RESET_DB=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--reset-db]"
+            exit 1
+            ;;
+    esac
+done
 
 if [[ -z "$PROJECT_ID" ]]; then
     echo "Error: PROJECT_ID is not set and could not be determined from gcloud config."
@@ -65,6 +81,7 @@ rm "$TMP_CADDY"
 
 gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command '
     set -euo pipefail
+    RESET_DB='"${RESET_DB}"'
 
     # Install Caddy
     if ! command -v caddy &>/dev/null; then
@@ -88,6 +105,13 @@ gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command '
     if systemctl is-active --quiet scion-hub; then
         echo "Stopping existing scion-hub service..."
         sudo systemctl stop scion-hub
+    fi
+
+    # 3b. Reset database if requested
+    if [ "$RESET_DB" = "true" ]; then
+        echo "Resetting hub database..."
+        sudo rm -f /home/scion/.scion/hub.db
+        echo "Database deleted."
     fi
 
     # 4. Install binary to /usr/local/bin
