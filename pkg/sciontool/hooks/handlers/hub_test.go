@@ -18,61 +18,70 @@ import (
 // TestHubHandler_EventMapping tests that events are correctly mapped to Hub status updates.
 func TestHubHandler_EventMapping(t *testing.T) {
 	tests := []struct {
-		name           string
-		eventName      string
-		eventData      hooks.EventData
-		expectCall     bool
-		expectedStatus string
+		name            string
+		eventName       string
+		eventData       hooks.EventData
+		expectCall      bool
+		expectedStatus  string
+		isSessionStatus bool // true if status is sent in sessionStatus field (activity states)
 	}{
 		{
-			name:           "session start sends running",
-			eventName:      hooks.EventSessionStart,
-			expectCall:     true,
-			expectedStatus: "running",
+			name:            "session start sends running",
+			eventName:       hooks.EventSessionStart,
+			expectCall:      true,
+			expectedStatus:  "running",
+			isSessionStatus: false, // lifecycle status
 		},
 		{
-			name:           "prompt submit sends busy",
-			eventName:      hooks.EventPromptSubmit,
-			expectCall:     true,
-			expectedStatus: "busy",
+			name:            "prompt submit sends busy",
+			eventName:       hooks.EventPromptSubmit,
+			expectCall:      true,
+			expectedStatus:  "busy",
+			isSessionStatus: true, // activity status
 		},
 		{
-			name:           "agent start sends busy",
-			eventName:      hooks.EventAgentStart,
-			expectCall:     true,
-			expectedStatus: "busy",
+			name:            "agent start sends busy",
+			eventName:       hooks.EventAgentStart,
+			expectCall:      true,
+			expectedStatus:  "busy",
+			isSessionStatus: true, // activity status
 		},
 		{
-			name:           "tool start sends busy",
-			eventName:      hooks.EventToolStart,
-			eventData:      hooks.EventData{ToolName: "Bash"},
-			expectCall:     true,
-			expectedStatus: "busy",
+			name:            "tool start sends busy",
+			eventName:       hooks.EventToolStart,
+			eventData:       hooks.EventData{ToolName: "Bash"},
+			expectCall:      true,
+			expectedStatus:  "busy",
+			isSessionStatus: true, // activity status
 		},
 		{
-			name:           "tool end sends idle",
-			eventName:      hooks.EventToolEnd,
-			expectCall:     true,
-			expectedStatus: "idle",
+			name:            "tool end sends idle",
+			eventName:       hooks.EventToolEnd,
+			expectCall:      true,
+			expectedStatus:  "idle",
+			isSessionStatus: true, // activity status
 		},
 		{
-			name:           "agent end sends idle",
-			eventName:      hooks.EventAgentEnd,
-			expectCall:     true,
-			expectedStatus: "idle",
+			name:            "agent end sends idle",
+			eventName:       hooks.EventAgentEnd,
+			expectCall:      true,
+			expectedStatus:  "idle",
+			isSessionStatus: true, // activity status
 		},
 		{
-			name:           "notification sends idle",
-			eventName:      hooks.EventNotification,
-			eventData:      hooks.EventData{Message: "What should I do?"},
-			expectCall:     true,
-			expectedStatus: "idle",
+			name:            "notification sends idle",
+			eventName:       hooks.EventNotification,
+			eventData:       hooks.EventData{Message: "What should I do?"},
+			expectCall:      true,
+			expectedStatus:  "idle",
+			isSessionStatus: true, // activity status
 		},
 		{
-			name:           "session end sends stopped",
-			eventName:      hooks.EventSessionEnd,
-			expectCall:     true,
-			expectedStatus: "stopped",
+			name:            "session end sends stopped",
+			eventName:       hooks.EventSessionEnd,
+			expectCall:      true,
+			expectedStatus:  "stopped",
+			isSessionStatus: false, // lifecycle status
 		},
 		{
 			name:       "pre start does not send",
@@ -105,8 +114,15 @@ func TestHubHandler_EventMapping(t *testing.T) {
 					return
 				}
 
-				if status, ok := payload["status"].(string); ok {
-					receivedStatus = status
+				// Check either status or sessionStatus based on what we expect
+				if tt.isSessionStatus {
+					if status, ok := payload["sessionStatus"].(string); ok {
+						receivedStatus = status
+					}
+				} else {
+					if status, ok := payload["status"].(string); ok {
+						receivedStatus = status
+					}
 				}
 
 				w.WriteHeader(http.StatusOK)
@@ -223,8 +239,9 @@ func TestHubHandler_ReportMethods(t *testing.T) {
 
 		mu.Lock()
 		defer mu.Unlock()
-		if receivedPayload["status"] != "idle" {
-			t.Errorf("Expected status 'idle', got %v", receivedPayload["status"])
+		// ReportWaitingForInput sends to sessionStatus (activity status, not lifecycle)
+		if receivedPayload["sessionStatus"] != "idle" {
+			t.Errorf("Expected sessionStatus 'idle', got %v", receivedPayload["sessionStatus"])
 		}
 		if receivedPayload["message"] != "What should I do?" {
 			t.Errorf("Expected message 'What should I do?', got %v", receivedPayload["message"])
@@ -243,8 +260,9 @@ func TestHubHandler_ReportMethods(t *testing.T) {
 
 		mu.Lock()
 		defer mu.Unlock()
-		if receivedPayload["status"] != "idle" {
-			t.Errorf("Expected status 'idle', got %v", receivedPayload["status"])
+		// ReportTaskCompleted sends to sessionStatus (activity status, not lifecycle)
+		if receivedPayload["sessionStatus"] != "idle" {
+			t.Errorf("Expected sessionStatus 'idle', got %v", receivedPayload["sessionStatus"])
 		}
 		if receivedPayload["taskSummary"] != "Fixed the bug" {
 			t.Errorf("Expected taskSummary 'Fixed the bug', got %v", receivedPayload["taskSummary"])

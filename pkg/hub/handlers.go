@@ -2035,19 +2035,92 @@ func (s *Server) deleteRuntimeBroker(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleBrokerHeartbeat(w http.ResponseWriter, r *http.Request, id string) {
-	var heartbeat struct {
-		Status string `json:"status"`
-	}
+// brokerHeartbeatRequest is the request body for broker heartbeats.
+type brokerHeartbeatRequest struct {
+	Status string                     `json:"status"`
+	Groves []brokerGroveHeartbeat     `json:"groves,omitempty"`
+}
 
+// brokerGroveHeartbeat is per-grove status in a heartbeat.
+type brokerGroveHeartbeat struct {
+	GroveID    string                 `json:"groveId"`
+	AgentCount int                    `json:"agentCount"`
+	Agents     []brokerAgentHeartbeat `json:"agents,omitempty"`
+}
+
+// brokerAgentHeartbeat is per-agent status in a heartbeat.
+type brokerAgentHeartbeat struct {
+	AgentID         string `json:"agentId"`
+	Status          string `json:"status"`          // Session status (IDLE, THINKING, etc.)
+	ContainerStatus string `json:"containerStatus,omitempty"`
+}
+
+func (s *Server) handleBrokerHeartbeat(w http.ResponseWriter, r *http.Request, id string) {
+	ctx := r.Context()
+
+	var heartbeat brokerHeartbeatRequest
 	if err := readJSON(r, &heartbeat); err != nil {
 		BadRequest(w, "Invalid request body: "+err.Error())
 		return
 	}
 
-	if err := s.store.UpdateRuntimeBrokerHeartbeat(r.Context(), id, heartbeat.Status); err != nil {
+	// Update the broker's heartbeat status
+	if err := s.store.UpdateRuntimeBrokerHeartbeat(ctx, id, heartbeat.Status); err != nil {
 		writeErrorFromErr(w, err, "")
 		return
+	}
+
+	// Process agent status updates from each grove
+	for _, grove := range heartbeat.Groves {
+		for _, agentHB := range grove.Agents {
+			// Look up the agent by name (slug) within the grove
+			agent, err := s.store.GetAgentBySlug(ctx, grove.GroveID, agentHB.AgentID)
+			if err != nil {
+				// Agent not found in this grove - skip silently
+				// This can happen if the agent exists locally but isn't registered on the Hub
+				continue
+			}
+
+			// Security check: ensure the agent belongs to this broker
+			if agent.RuntimeBrokerID != id {
+				slog.Warn("Broker attempted to update agent owned by different broker",
+					"brokerID", id,
+					"agentBrokerID", agent.RuntimeBrokerID,
+					"agentID", agent.ID)
+				continue
+			}
+
+			// Build status update with session status and container status
+			statusUpdate := store.AgentStatusUpdate{
+				SessionStatus:   agentHB.Status,
+				ContainerStatus: agentHB.ContainerStatus,
+				Heartbeat:       true, // Ensures LastSeen is updated
+			}
+
+			// Derive lifecycle status from container status to ensure agents
+			// registered via sync (not started via hub) get proper status
+			if agentHB.ContainerStatus != "" {
+				containerStatusLower := strings.ToLower(agentHB.ContainerStatus)
+				switch {
+				case strings.HasPrefix(containerStatusLower, "up") || containerStatusLower == "running":
+					statusUpdate.Status = store.AgentStatusRunning
+				case strings.HasPrefix(containerStatusLower, "exited") || containerStatusLower == "stopped":
+					statusUpdate.Status = store.AgentStatusStopped
+				case containerStatusLower == "created":
+					statusUpdate.Status = store.AgentStatusProvisioning
+				}
+			}
+
+			// Update the agent's status
+			if err := s.store.UpdateAgentStatus(ctx, agent.ID, statusUpdate); err != nil {
+				// Log error but continue processing other agents
+				slog.Error("Failed to update agent status from heartbeat",
+					"agentID", agent.ID,
+					"agentName", agentHB.AgentID,
+					"groveID", grove.GroveID,
+					"error", err)
+			}
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

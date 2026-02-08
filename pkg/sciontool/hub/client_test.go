@@ -155,13 +155,17 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	t.Run("ReportBusy", func(t *testing.T) {
 		err := client.ReportBusy(ctx, "processing")
 		require.NoError(t, err)
-		assert.Equal(t, StatusBusy, lastStatus.Status)
+		// ReportBusy sends to sessionStatus (not lifecycle status)
+		assert.Equal(t, StatusBusy, lastStatus.SessionStatus)
+		assert.Equal(t, "processing", lastStatus.Message)
 	})
 
 	t.Run("ReportIdle", func(t *testing.T) {
 		err := client.ReportIdle(ctx, "waiting")
 		require.NoError(t, err)
-		assert.Equal(t, StatusIdle, lastStatus.Status)
+		// ReportIdle sends to sessionStatus (not lifecycle status)
+		assert.Equal(t, StatusIdle, lastStatus.SessionStatus)
+		assert.Equal(t, "waiting", lastStatus.Message)
 	})
 
 	t.Run("ReportError", func(t *testing.T) {
@@ -179,7 +183,8 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	t.Run("ReportTaskCompleted", func(t *testing.T) {
 		err := client.ReportTaskCompleted(ctx, "implemented feature")
 		require.NoError(t, err)
-		assert.Equal(t, StatusIdle, lastStatus.Status)
+		// ReportTaskCompleted sends to sessionStatus (not lifecycle status)
+		assert.Equal(t, StatusIdle, lastStatus.SessionStatus)
 		assert.Equal(t, "implemented feature", lastStatus.TaskSummary)
 	})
 }

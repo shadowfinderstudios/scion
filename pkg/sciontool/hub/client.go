@@ -55,8 +55,15 @@ const (
 )
 
 // StatusUpdate represents a status update request.
+// Fields:
+// - Status: Lifecycle status (running, stopped, error). Only set for lifecycle transitions.
+// - SessionStatus: Agent activity status (idle, busy). Used for agent session state.
+// - Message: Optional message associated with the status.
+// - TaskSummary: Current task description.
+// - Heartbeat: If true, only updates last_seen without changing status.
 type StatusUpdate struct {
-	Status        AgentStatus `json:"status"`
+	Status        AgentStatus `json:"status,omitempty"`
+	SessionStatus AgentStatus `json:"sessionStatus,omitempty"`
 	Message       string      `json:"message,omitempty"`
 	TaskSummary   string      `json:"taskSummary,omitempty"`
 	Heartbeat     bool        `json:"heartbeat,omitempty"`
@@ -231,18 +238,20 @@ func (c *Client) ReportRunning(ctx context.Context, message string) error {
 }
 
 // ReportBusy reports that the agent is busy with a task.
+// This updates the session status (not lifecycle status).
 func (c *Client) ReportBusy(ctx context.Context, message string) error {
 	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusBusy,
-		Message: message,
+		SessionStatus: StatusBusy,
+		Message:       message,
 	})
 }
 
 // ReportIdle reports that the agent is idle.
+// This updates the session status (not lifecycle status).
 func (c *Client) ReportIdle(ctx context.Context, message string) error {
 	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusIdle,
-		Message: message,
+		SessionStatus: StatusIdle,
+		Message:       message,
 	})
 }
 
@@ -263,10 +272,11 @@ func (c *Client) ReportShuttingDown(ctx context.Context, message string) error {
 }
 
 // ReportTaskCompleted reports that a task has been completed.
+// This sets the session status to idle and records the task summary.
 func (c *Client) ReportTaskCompleted(ctx context.Context, taskSummary string) error {
 	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:      StatusIdle,
-		TaskSummary: taskSummary,
+		SessionStatus: StatusIdle,
+		TaskSummary:   taskSummary,
 	})
 }
 
