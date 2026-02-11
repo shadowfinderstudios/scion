@@ -85,6 +85,9 @@ type AgentAppliedConfig struct {
 	// Template info for Runtime Broker hydration
 	TemplateID   string `json:"templateId,omitempty"`   // Hub template ID for fetching
 	TemplateHash string `json:"templateHash,omitempty"` // Content hash for cache validation
+
+	// Hub access scopes granted to the agent (from template HubAccess config)
+	HubAccessScopes []string `json:"hubAccessScopes,omitempty"`
 }
 
 // AgentStatus constants
@@ -279,6 +282,12 @@ type TemplateConfig struct {
 	CommandArgs []string          `json:"commandArgs,omitempty"`
 	Model       string            `json:"model,omitempty"`
 	Kubernetes  *KubernetesConfig `json:"kubernetes,omitempty"`
+	HubAccess   *HubAccessConfig  `json:"hubAccess,omitempty"`
+}
+
+// HubAccessConfig defines what Hub API scopes an agent created from this template receives.
+type HubAccessConfig struct {
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // KubernetesConfig holds Kubernetes-specific configuration for templates.

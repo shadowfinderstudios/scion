@@ -232,6 +232,24 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if the caller is an agent (sub-agent creation)
+	var createdBy string
+	if agentIdent := GetAgentIdentityFromContext(ctx); agentIdent != nil {
+		// Agent callers must have the grove:agent:create scope
+		if !agentIdent.HasScope(ScopeAgentCreate) {
+			writeError(w, http.StatusForbidden, ErrCodeForbidden, "Missing required scope: grove:agent:create", nil)
+			return
+		}
+		// Enforce grove isolation: agents can only create sub-agents in their own grove
+		if req.GroveID != agentIdent.GroveID() {
+			writeError(w, http.StatusForbidden, ErrCodeForbidden, "Agents can only create sub-agents within their own grove", nil)
+			return
+		}
+		createdBy = agentIdent.ID()
+	} else if userIdent := GetUserIdentityFromContext(ctx); userIdent != nil {
+		createdBy = userIdent.ID()
+	}
+
 	// Verify grove exists and get its configuration
 	grove, err := s.store.GetGrove(ctx, req.GroveID)
 	if err != nil {
@@ -336,6 +354,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		Status:          store.AgentStatusPending,
 		Labels:          req.Labels,
 		Visibility:      store.VisibilityPrivate,
+		CreatedBy:       createdBy,
 	}
 
 	if req.Config != nil {
@@ -361,10 +380,13 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Populate template ID and hash if template was resolved
+	// Populate template ID, hash, and hub access scopes if template was resolved
 	if resolvedTemplate != nil && agent.AppliedConfig != nil {
 		agent.AppliedConfig.TemplateID = resolvedTemplate.ID
 		agent.AppliedConfig.TemplateHash = resolvedTemplate.ContentHash
+		if resolvedTemplate.Config != nil && resolvedTemplate.Config.HubAccess != nil {
+			agent.AppliedConfig.HubAccessScopes = resolvedTemplate.Config.HubAccess.Scopes
+		}
 	}
 
 	if err := s.store.CreateAgent(ctx, agent); err != nil {
@@ -556,6 +578,14 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
+	// If the caller is an agent, enforce grove isolation
+	if agentIdent := GetAgentIdentityFromContext(ctx); agentIdent != nil {
+		if agent.GroveID != agentIdent.GroveID() {
+			NotFound(w, "Agent")
+			return
+		}
+	}
+
 	// Enrich agent with grove and broker names
 	s.enrichAgent(ctx, agent, nil, nil)
 
@@ -683,12 +713,32 @@ func (s *Server) handleAgentAction(w http.ResponseWriter, r *http.Request, id, a
 		return
 	}
 
-	// For actions other than "status", we require user authentication.
-	// Agents should only be able to update their own status.
+	// For actions other than "status", we require user or agent authentication.
+	// Agents should only be able to update their own status, or perform lifecycle
+	// actions on agents within their grove if they have the appropriate scope.
 	if action != "status" {
-		if GetUserIdentityFromContext(r.Context()) == nil {
-			writeError(w, http.StatusForbidden, ErrCodeForbidden, "This action requires user authentication", nil)
+		userIdent := GetUserIdentityFromContext(r.Context())
+		agentIdent := GetAgentIdentityFromContext(r.Context())
+		if userIdent == nil && agentIdent == nil {
+			writeError(w, http.StatusForbidden, ErrCodeForbidden, "This action requires user or agent authentication", nil)
 			return
+		}
+		// If the caller is an agent, verify scope and grove isolation for lifecycle actions
+		if agentIdent != nil && userIdent == nil {
+			if !agentIdent.HasScope(ScopeAgentLifecycle) {
+				writeError(w, http.StatusForbidden, ErrCodeForbidden, "Missing required scope: grove:agent:lifecycle", nil)
+				return
+			}
+			// Look up target agent for grove isolation check
+			targetAgent, err := s.store.GetAgent(r.Context(), id)
+			if err != nil {
+				writeErrorFromErr(w, err, "")
+				return
+			}
+			if targetAgent.GroveID != agentIdent.GroveID() {
+				writeError(w, http.StatusForbidden, ErrCodeForbidden, "Agents can only manage agents within their own grove", nil)
+				return
+			}
 		}
 	}
 

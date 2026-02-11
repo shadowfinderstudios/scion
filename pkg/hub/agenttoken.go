@@ -46,6 +46,10 @@ const (
 	ScopeAgentLogAppend AgentTokenScope = "agent:log:append"
 	// ScopeGroveSecretRead allows the agent to read grove secrets.
 	ScopeGroveSecretRead AgentTokenScope = "grove:secret:read"
+	// ScopeAgentCreate allows the agent to create sub-agents within the same grove.
+	ScopeAgentCreate AgentTokenScope = "grove:agent:create"
+	// ScopeAgentLifecycle allows the agent to start/stop/restart agents within the same grove.
+	ScopeAgentLifecycle AgentTokenScope = "grove:agent:lifecycle"
 )
 
 // AgentTokenClaims represents the custom claims in an agent JWT.

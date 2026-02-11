@@ -536,7 +536,8 @@ func (s *Server) CreateAuthenticatedDispatcher() *HTTPAgentDispatcher {
 
 // GenerateAgentToken generates a JWT for an agent.
 // This is a convenience method that delegates to the token service.
-func (s *Server) GenerateAgentToken(agentID, groveID string) (string, error) {
+// Additional scopes are merged with the default ScopeAgentStatusUpdate scope.
+func (s *Server) GenerateAgentToken(agentID, groveID string, additionalScopes ...AgentTokenScope) (string, error) {
 	s.mu.RLock()
 	tokenService := s.agentTokenService
 	s.mu.RUnlock()
@@ -545,7 +546,15 @@ func (s *Server) GenerateAgentToken(agentID, groveID string) (string, error) {
 		return "", fmt.Errorf("agent token service not initialized")
 	}
 
-	return tokenService.GenerateAgentToken(agentID, groveID, []AgentTokenScope{ScopeAgentStatusUpdate})
+	scopes := []AgentTokenScope{ScopeAgentStatusUpdate}
+	for _, scope := range additionalScopes {
+		// Avoid duplicating the default scope
+		if scope != ScopeAgentStatusUpdate {
+			scopes = append(scopes, scope)
+		}
+	}
+
+	return tokenService.GenerateAgentToken(agentID, groveID, scopes)
 }
 
 // Start starts the HTTP server.

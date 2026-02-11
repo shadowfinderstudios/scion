@@ -121,6 +121,10 @@ func (m *mockRuntimeBrokerClient) MessageAgent(ctx context.Context, brokerID, br
 	return m.returnErr
 }
 
+func (m *mockRuntimeBrokerClient) CheckAgentPrompt(ctx context.Context, brokerID, brokerEndpoint, agentID string) (bool, error) {
+	return false, m.returnErr
+}
+
 func TestHTTPAgentDispatcher_DispatchAgentCreate(t *testing.T) {
 	ctx := context.Background()
 	memStore := createTestStore(t)

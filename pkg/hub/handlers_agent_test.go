@@ -278,6 +278,321 @@ func TestAgentLifecycle_BrokerOffline(t *testing.T) {
 	assert.Equal(t, ErrCodeRuntimeBrokerUnavail, errResp.Error.Code)
 }
 
+// ============================================================================
+// Agent-as-Caller Tests (Sub-Agent Creation & Lifecycle)
+// ============================================================================
+
+func TestAgentCreateAgent_WithScope(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	// Create a grove
+	grove := &store.Grove{
+		ID:   "grove-parent",
+		Name: "Parent Grove",
+		Slug: "parent-grove",
+	}
+	require.NoError(t, s.CreateGrove(ctx, grove))
+
+	// Create a runtime broker and provider for the grove
+	broker := &store.RuntimeBroker{
+		ID:     "broker-parent",
+		Name:   "Parent Broker",
+		Slug:   "parent-broker",
+		Status: store.BrokerStatusOnline,
+	}
+	require.NoError(t, s.CreateRuntimeBroker(ctx, broker))
+
+	contrib := &store.GroveProvider{
+		GroveID:    grove.ID,
+		BrokerID:   broker.ID,
+		BrokerName: broker.Name,
+		Status:     store.BrokerStatusOnline,
+	}
+	require.NoError(t, s.AddGroveProvider(ctx, contrib))
+
+	// Update grove default broker
+	grove.DefaultRuntimeBrokerID = broker.ID
+	require.NoError(t, s.UpdateGrove(ctx, grove))
+
+	// Create the calling agent
+	callingAgent := &store.Agent{
+		ID:      "agent-caller",
+		Slug:    "agent-caller",
+		Name:    "Calling Agent",
+		GroveID: grove.ID,
+		Status:  store.AgentStatusRunning,
+	}
+	require.NoError(t, s.CreateAgent(ctx, callingAgent))
+
+	tokenSvc := srv.GetAgentTokenService()
+	require.NotNil(t, tokenSvc)
+
+	t.Run("Agent with grove:agent:create scope can create agent in same grove", func(t *testing.T) {
+		token, err := tokenSvc.GenerateAgentToken(callingAgent.ID, grove.ID, []AgentTokenScope{
+			ScopeAgentStatusUpdate,
+			ScopeAgentCreate,
+		})
+		require.NoError(t, err)
+
+		body, _ := json.Marshal(CreateAgentRequest{
+			Name:    "Sub Agent",
+			GroveID: grove.ID,
+			Task:    "do something",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader(body))
+		req.Header.Set("X-Scion-Agent-Token", token)
+		req.Header.Set("Content-Type", "application/json")
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+
+		var resp CreateAgentResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.NotNil(t, resp.Agent)
+		assert.Equal(t, "sub-agent", resp.Agent.Slug)
+		assert.Equal(t, callingAgent.ID, resp.Agent.CreatedBy)
+	})
+
+	t.Run("Agent with grove:agent:create scope rejected for different grove", func(t *testing.T) {
+		// Create another grove
+		otherGrove := &store.Grove{
+			ID:   "grove-other",
+			Name: "Other Grove",
+			Slug: "other-grove",
+		}
+		require.NoError(t, s.CreateGrove(ctx, otherGrove))
+
+		token, err := tokenSvc.GenerateAgentToken(callingAgent.ID, grove.ID, []AgentTokenScope{
+			ScopeAgentStatusUpdate,
+			ScopeAgentCreate,
+		})
+		require.NoError(t, err)
+
+		body, _ := json.Marshal(CreateAgentRequest{
+			Name:    "Cross Grove Agent",
+			GroveID: otherGrove.ID,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader(body))
+		req.Header.Set("X-Scion-Agent-Token", token)
+		req.Header.Set("Content-Type", "application/json")
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("Agent without grove:agent:create scope is rejected", func(t *testing.T) {
+		// Token with only status update scope (no create scope)
+		token, err := tokenSvc.GenerateAgentToken(callingAgent.ID, grove.ID, []AgentTokenScope{
+			ScopeAgentStatusUpdate,
+		})
+		require.NoError(t, err)
+
+		body, _ := json.Marshal(CreateAgentRequest{
+			Name:    "Unauthorized Sub",
+			GroveID: grove.ID,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader(body))
+		req.Header.Set("X-Scion-Agent-Token", token)
+		req.Header.Set("Content-Type", "application/json")
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestAgentLifecycle_WithScope(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	// Create a grove
+	grove := &store.Grove{
+		ID:   "grove-lc",
+		Name: "Lifecycle Grove",
+		Slug: "lifecycle-grove",
+	}
+	require.NoError(t, s.CreateGrove(ctx, grove))
+
+	// Create the calling agent
+	callingAgent := &store.Agent{
+		ID:      "agent-lc-caller",
+		Slug:    "agent-lc-caller",
+		Name:    "Lifecycle Caller",
+		GroveID: grove.ID,
+		Status:  store.AgentStatusRunning,
+	}
+	require.NoError(t, s.CreateAgent(ctx, callingAgent))
+
+	// Create a target agent in the same grove
+	targetAgent := &store.Agent{
+		ID:      "agent-lc-target",
+		Slug:    "agent-lc-target",
+		Name:    "Lifecycle Target",
+		GroveID: grove.ID,
+		Status:  store.AgentStatusRunning,
+	}
+	require.NoError(t, s.CreateAgent(ctx, targetAgent))
+
+	tokenSvc := srv.GetAgentTokenService()
+	require.NotNil(t, tokenSvc)
+
+	t.Run("Agent with grove:agent:lifecycle scope can perform lifecycle actions in same grove", func(t *testing.T) {
+		token, err := tokenSvc.GenerateAgentToken(callingAgent.ID, grove.ID, []AgentTokenScope{
+			ScopeAgentStatusUpdate,
+			ScopeAgentLifecycle,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+targetAgent.ID+"/stop", nil)
+		req.Header.Set("X-Scion-Agent-Token", token)
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		// May return 200 or 500 (no dispatcher), but not 403 - the auth check passes
+		assert.NotEqual(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("Agent with grove:agent:lifecycle scope rejected for cross-grove lifecycle", func(t *testing.T) {
+		// Create another grove and agent
+		otherGrove := &store.Grove{
+			ID:   "grove-lc-other",
+			Name: "Other LC Grove",
+			Slug: "other-lc-grove",
+		}
+		require.NoError(t, s.CreateGrove(ctx, otherGrove))
+
+		otherAgent := &store.Agent{
+			ID:      "agent-lc-other",
+			Slug:    "agent-lc-other",
+			Name:    "Other LC Agent",
+			GroveID: otherGrove.ID,
+			Status:  store.AgentStatusRunning,
+		}
+		require.NoError(t, s.CreateAgent(ctx, otherAgent))
+
+		token, err := tokenSvc.GenerateAgentToken(callingAgent.ID, grove.ID, []AgentTokenScope{
+			ScopeAgentStatusUpdate,
+			ScopeAgentLifecycle,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+otherAgent.ID+"/stop", nil)
+		req.Header.Set("X-Scion-Agent-Token", token)
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("Agent without lifecycle scope cannot perform lifecycle actions", func(t *testing.T) {
+		// Token with only status update scope (existing behavior)
+		token, err := tokenSvc.GenerateAgentToken(callingAgent.ID, grove.ID, []AgentTokenScope{
+			ScopeAgentStatusUpdate,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+targetAgent.ID+"/stop", nil)
+		req.Header.Set("X-Scion-Agent-Token", token)
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestAgentGetAgent_GroveIsolation(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	// Create two groves
+	grove1 := &store.Grove{
+		ID:   "grove-get1",
+		Name: "Get Grove 1",
+		Slug: "get-grove-1",
+	}
+	require.NoError(t, s.CreateGrove(ctx, grove1))
+
+	grove2 := &store.Grove{
+		ID:   "grove-get2",
+		Name: "Get Grove 2",
+		Slug: "get-grove-2",
+	}
+	require.NoError(t, s.CreateGrove(ctx, grove2))
+
+	// Create agents in each grove
+	agent1 := &store.Agent{
+		ID:      "agent-get-caller",
+		Slug:    "agent-get-caller",
+		Name:    "Get Caller",
+		GroveID: grove1.ID,
+		Status:  store.AgentStatusRunning,
+	}
+	require.NoError(t, s.CreateAgent(ctx, agent1))
+
+	agent2SameGrove := &store.Agent{
+		ID:      "agent-get-same",
+		Slug:    "agent-get-same",
+		Name:    "Same Grove Agent",
+		GroveID: grove1.ID,
+		Status:  store.AgentStatusRunning,
+	}
+	require.NoError(t, s.CreateAgent(ctx, agent2SameGrove))
+
+	agentOtherGrove := &store.Agent{
+		ID:      "agent-get-other",
+		Slug:    "agent-get-other",
+		Name:    "Other Grove Agent",
+		GroveID: grove2.ID,
+		Status:  store.AgentStatusRunning,
+	}
+	require.NoError(t, s.CreateAgent(ctx, agentOtherGrove))
+
+	tokenSvc := srv.GetAgentTokenService()
+	require.NotNil(t, tokenSvc)
+
+	token, err := tokenSvc.GenerateAgentToken(agent1.ID, grove1.ID, []AgentTokenScope{ScopeAgentStatusUpdate})
+	require.NoError(t, err)
+
+	t.Run("Agent can GET details of agents in same grove", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agent2SameGrove.ID, nil)
+		req.Header.Set("X-Scion-Agent-Token", token)
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("Agent cannot GET details of agents in different grove", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agentOtherGrove.ID, nil)
+		req.Header.Set("X-Scion-Agent-Token", token)
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("Agent cannot access workspace operations", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agent2SameGrove.ID+"/workspace", nil)
+		req.Header.Set("X-Scion-Agent-Token", token)
+
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
 func TestDeleteGroveAgent_BrokerOffline(t *testing.T) {
 	srv, s := testServer(t)
 

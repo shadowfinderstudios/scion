@@ -293,7 +293,7 @@ func (c *HTTPRuntimeBrokerClient) CheckAgentPrompt(ctx context.Context, brokerID
 
 // AgentTokenGenerator generates JWT tokens for agents.
 type AgentTokenGenerator interface {
-	GenerateAgentToken(agentID, groveID string) (string, error)
+	GenerateAgentToken(agentID, groveID string, additionalScopes ...AgentTokenScope) (string, error)
 }
 
 // HTTPAgentDispatcher dispatches agent operations to remote runtime brokers via HTTP.
@@ -399,7 +399,14 @@ func (d *HTTPAgentDispatcher) DispatchAgentCreate(ctx context.Context, agent *st
 
 	// Generate agent token if token generator is available
 	if d.tokenGenerator != nil {
-		token, err := d.tokenGenerator.GenerateAgentToken(agent.ID, agent.GroveID)
+		// Convert hub access scopes from AppliedConfig to AgentTokenScope
+		var additionalScopes []AgentTokenScope
+		if agent.AppliedConfig != nil {
+			for _, s := range agent.AppliedConfig.HubAccessScopes {
+				additionalScopes = append(additionalScopes, AgentTokenScope(s))
+			}
+		}
+		token, err := d.tokenGenerator.GenerateAgentToken(agent.ID, agent.GroveID, additionalScopes...)
 		if err != nil {
 			if d.debug {
 				slog.Warn("Failed to generate agent token", "error", err)

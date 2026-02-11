@@ -384,6 +384,14 @@ func getHubClient(settings *config.Settings) (hubclient.Client, error) {
 		}
 	}
 
+	// Check for agent-mode token (running inside a container)
+	if !authConfigured {
+		if token := os.Getenv("SCION_HUB_TOKEN"); token != "" {
+			opts = append(opts, hubclient.WithBearerToken(token))
+			authConfigured = true
+		}
+	}
+
 	// Fallback to auto dev auth if no explicit auth configured
 	// This checks SCION_DEV_TOKEN env var and ~/.scion/dev-token file
 	if !authConfigured {

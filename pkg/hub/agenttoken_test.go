@@ -110,6 +110,33 @@ func TestAgentTokenClaims_HasScope(t *testing.T) {
 	assert.False(t, claims.HasScope(ScopeGroveSecretRead))
 }
 
+func TestAgentTokenService_AgentCreateAndLifecycleScopes(t *testing.T) {
+	service, err := NewAgentTokenService(AgentTokenConfig{
+		SigningKey:    make([]byte, 32),
+		TokenDuration: time.Hour,
+	})
+	require.NoError(t, err)
+
+	// Generate a token with agent create and lifecycle scopes
+	token, err := service.GenerateAgentToken("agent-sub", "grove-parent", []AgentTokenScope{
+		ScopeAgentStatusUpdate,
+		ScopeAgentCreate,
+		ScopeAgentLifecycle,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, token)
+
+	// Validate the token
+	claims, err := service.ValidateAgentToken(token)
+	require.NoError(t, err)
+	assert.Equal(t, "agent-sub", claims.Subject)
+	assert.Equal(t, "grove-parent", claims.GroveID)
+	assert.True(t, claims.HasScope(ScopeAgentStatusUpdate))
+	assert.True(t, claims.HasScope(ScopeAgentCreate))
+	assert.True(t, claims.HasScope(ScopeAgentLifecycle))
+	assert.False(t, claims.HasScope(ScopeGroveSecretRead))
+}
+
 func TestAgentTokenService_RandomKeyGeneration(t *testing.T) {
 	// When no signing key is provided, a random one should be generated
 	service, err := NewAgentTokenService(AgentTokenConfig{})
