@@ -501,6 +501,7 @@ type Group struct {
 	Name        string `json:"name"`        // Human-friendly display name
 	Slug        string `json:"slug"`        // URL-safe identifier
 	Description string `json:"description,omitempty"`
+	GroupType   string `json:"groupType,omitempty"` // "explicit" or "grove_agents"
 
 	// Hierarchy
 	ParentID string `json:"parentId,omitempty"` // Optional parent group for hierarchy
@@ -533,6 +534,18 @@ type GroupMember struct {
 const (
 	GroupMemberTypeUser  = "user"
 	GroupMemberTypeGroup = "group"
+	GroupMemberTypeAgent = "agent"
+)
+
+// GroupType constants
+const (
+	GroupTypeExplicit   = "explicit"
+	GroupTypeGroveAgents = "grove_agents"
+)
+
+// PolicyPrincipalType agent constant
+const (
+	PolicyPrincipalTypeAgent = "agent"
 )
 
 // GroupMemberRole constants

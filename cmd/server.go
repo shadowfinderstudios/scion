@@ -42,7 +42,9 @@ import (
 	"github.com/ptone/scion-agent/pkg/runtimebroker"
 	"github.com/ptone/scion-agent/pkg/secret"
 	"github.com/ptone/scion-agent/pkg/storage"
+	"github.com/ptone/scion-agent/pkg/ent/entc"
 	"github.com/ptone/scion-agent/pkg/store"
+	"github.com/ptone/scion-agent/pkg/store/entadapter"
 	"github.com/ptone/scion-agent/pkg/store/sqlite"
 	"github.com/ptone/scion-agent/pkg/util/logging"
 	"github.com/spf13/cobra"
@@ -332,13 +334,29 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
-			s = sqliteStore
-			defer s.Close()
+			defer sqliteStore.Close()
 
-			// Run migrations
-			if err := s.Migrate(context.Background()); err != nil {
+			// Run legacy migrations
+			if err := sqliteStore.Migrate(context.Background()); err != nil {
 				return fmt.Errorf("failed to run migrations: %w", err)
 			}
+
+			// Create Ent client for group operations (uses a separate
+			// in-process database so Ent-managed tables don't conflict
+			// with the legacy SQLite schema).
+			entDSN := cfg.Database.URL + "_ent"
+			entClient, err := entc.OpenSQLite("file:" + entDSN + "?cache=shared")
+			if err != nil {
+				return fmt.Errorf("failed to open ent database: %w", err)
+			}
+			if err := entc.AutoMigrate(context.Background(), entClient); err != nil {
+				entClient.Close()
+				return fmt.Errorf("failed to run ent migrations: %w", err)
+			}
+
+			// Wrap the SQLite store with the Ent-backed CompositeStore
+			// so that all group operations use the Ent ORM.
+			s = entadapter.NewCompositeStore(sqliteStore, entClient)
 		default:
 			return fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
 		}

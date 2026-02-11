@@ -433,8 +433,9 @@ type GroupStore interface {
 
 // GroupFilter defines criteria for filtering groups.
 type GroupFilter struct {
-	OwnerID  string // Filter by owner
-	ParentID string // Filter by parent group
+	OwnerID   string // Filter by owner
+	ParentID  string // Filter by parent group
+	GroupType string // Filter by group type ("explicit" or "grove_agents")
 }
 
 // PolicyStore defines policy-related persistence operations.

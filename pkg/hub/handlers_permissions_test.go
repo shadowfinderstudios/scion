@@ -389,6 +389,185 @@ func TestGroupCycleDetection(t *testing.T) {
 	}
 }
 
+func TestGroupMembersAddAgent(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	group := &store.Group{
+		ID:      "group_agent123",
+		Name:    "Test Group",
+		Slug:    "test-group-agent",
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+	if err := s.CreateGroup(ctx, group); err != nil {
+		t.Fatalf("failed to create group: %v", err)
+	}
+
+	body := AddGroupMemberRequest{
+		MemberType: "agent",
+		MemberID:   "agent_abc123",
+		Role:       "member",
+	}
+
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groups/"+group.ID+"/members", body)
+
+	if rec.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp store.GroupMember
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.MemberType != "agent" {
+		t.Errorf("expected memberType 'agent', got %q", resp.MemberType)
+	}
+	if resp.MemberID != "agent_abc123" {
+		t.Errorf("expected memberId 'agent_abc123', got %q", resp.MemberID)
+	}
+}
+
+func TestGroupMemberRemoveAgent(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	group := &store.Group{
+		ID:      "group_rmagent",
+		Name:    "Test Group",
+		Slug:    "test-group-rm-agent",
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+	if err := s.CreateGroup(ctx, group); err != nil {
+		t.Fatalf("failed to create group: %v", err)
+	}
+
+	member := &store.GroupMember{
+		GroupID:    group.ID,
+		MemberType: "agent",
+		MemberID:   "agent_remove",
+		Role:       "member",
+		AddedAt:    time.Now(),
+	}
+	if err := s.AddGroupMember(ctx, member); err != nil {
+		t.Fatalf("failed to add member: %v", err)
+	}
+
+	rec := doRequest(t, srv, http.MethodDelete, "/api/v1/groups/"+group.ID+"/members/agent/agent_remove", nil)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify removed
+	_, err := s.GetGroupMembership(ctx, group.ID, "agent", "agent_remove")
+	if err != store.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestGroupCreateWithGroupType(t *testing.T) {
+	srv, _ := testServer(t)
+
+	// Default type (explicit) should succeed
+	body := CreateGroupRequest{
+		Name: "Explicit Group",
+		Slug: "explicit-group",
+	}
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groups", body)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var group store.Group
+	if err := json.NewDecoder(rec.Body).Decode(&group); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if group.GroupType != "explicit" {
+		t.Errorf("expected groupType 'explicit', got %q", group.GroupType)
+	}
+}
+
+func TestGroupCreateGroveAgentsRejected(t *testing.T) {
+	srv, _ := testServer(t)
+
+	body := CreateGroupRequest{
+		Name:      "Grove Group",
+		Slug:      "grove-group",
+		GroupType: "grove_agents",
+	}
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groups", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for grove_agents creation, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupCreateInvalidGroupType(t *testing.T) {
+	srv, _ := testServer(t)
+
+	body := CreateGroupRequest{
+		Name:      "Bad Type",
+		Slug:      "bad-type",
+		GroupType: "invalid",
+	}
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groups", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid groupType, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupListWithGroupTypeFilter(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	// Create groups with different (or default) types
+	g1 := &store.Group{
+		ID:        "group_explicit_1",
+		Name:      "Explicit 1",
+		Slug:      "explicit-1",
+		GroupType: "explicit",
+		Created:   time.Now(),
+		Updated:   time.Now(),
+	}
+	g2 := &store.Group{
+		ID:        "group_explicit_2",
+		Name:      "Explicit 2",
+		Slug:      "explicit-2",
+		GroupType: "explicit",
+		Created:   time.Now(),
+		Updated:   time.Now(),
+	}
+	for _, g := range []*store.Group{g1, g2} {
+		if err := s.CreateGroup(ctx, g); err != nil {
+			t.Fatalf("failed to create group: %v", err)
+		}
+	}
+
+	// Filter by groupType=explicit
+	rec := doRequest(t, srv, http.MethodGet, "/api/v1/groups?groupType=explicit", nil)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp ListGroupsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Groups) != 2 {
+		t.Errorf("expected 2 groups, got %d", len(resp.Groups))
+	}
+}
+
+func TestGroupDeleteGroveAgentsRejected(t *testing.T) {
+	// This test requires the Ent-backed store to persist GroupType.
+	// The legacy SQLite store has no group_type column, so GroupType
+	// always defaults to "explicit" on read. This test validates the
+	// handler logic which is exercised via the entadapter tests.
+	t.Skip("requires Ent-backed store (GroupType not persisted in legacy SQLite)")
+}
+
 // ============================================================================
 // Policy Endpoint Tests
 // ============================================================================

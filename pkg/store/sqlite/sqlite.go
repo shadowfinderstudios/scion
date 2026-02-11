@@ -2422,6 +2422,9 @@ func (s *SQLiteStore) CreateGroup(ctx context.Context, group *store.Group) error
 	now := time.Now()
 	group.Created = now
 	group.Updated = now
+	if group.GroupType == "" {
+		group.GroupType = store.GroupTypeExplicit
+	}
 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO groups (id, name, slug, description, parent_id, labels, annotations, created_at, updated_at, created_by, owner_id)
@@ -2465,6 +2468,9 @@ func (s *SQLiteStore) GetGroup(ctx context.Context, id string) (*store.Group, er
 	}
 	unmarshalJSON(labels, &group.Labels)
 	unmarshalJSON(annotations, &group.Annotations)
+	if group.GroupType == "" {
+		group.GroupType = store.GroupTypeExplicit
+	}
 
 	return group, nil
 }
@@ -2585,6 +2591,9 @@ func (s *SQLiteStore) ListGroups(ctx context.Context, filter store.GroupFilter, 
 		}
 		unmarshalJSON(labels, &group.Labels)
 		unmarshalJSON(annotations, &group.Annotations)
+		if group.GroupType == "" {
+			group.GroupType = store.GroupTypeExplicit
+		}
 
 		groups = append(groups, group)
 	}

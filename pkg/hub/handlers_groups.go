@@ -39,6 +39,7 @@ type CreateGroupRequest struct {
 	Name        string            `json:"name"`
 	Slug        string            `json:"slug,omitempty"`
 	Description string            `json:"description,omitempty"`
+	GroupType   string            `json:"groupType,omitempty"`
 	ParentID    string            `json:"parentId,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
@@ -83,8 +84,9 @@ func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
 	filter := store.GroupFilter{
-		OwnerID:  query.Get("ownerId"),
-		ParentID: query.Get("parentId"),
+		OwnerID:   query.Get("ownerId"),
+		ParentID:  query.Get("parentId"),
+		GroupType: query.Get("groupType"),
 	}
 
 	limit := 50
@@ -124,6 +126,20 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate and default GroupType
+	groupType := req.GroupType
+	if groupType == "" {
+		groupType = store.GroupTypeExplicit
+	}
+	if groupType != store.GroupTypeExplicit && groupType != store.GroupTypeGroveAgents {
+		ValidationError(w, "groupType must be 'explicit' or 'grove_agents'", nil)
+		return
+	}
+	if groupType == store.GroupTypeGroveAgents {
+		ValidationError(w, "grove_agents groups are system-managed and cannot be created via API", nil)
+		return
+	}
+
 	slug := req.Slug
 	if slug == "" {
 		slug = api.Slugify(req.Name)
@@ -134,6 +150,7 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 		Name:        req.Name,
 		Slug:        slug,
 		Description: req.Description,
+		GroupType:   groupType,
 		ParentID:    req.ParentID,
 		Labels:      req.Labels,
 		Annotations: req.Annotations,
@@ -286,6 +303,11 @@ func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 
+	if group.GroupType == store.GroupTypeGroveAgents {
+		BadRequest(w, "grove_agents groups are system-managed and cannot be deleted via API")
+		return
+	}
+
 	if err := s.store.DeleteGroup(ctx, group.ID); err != nil {
 		writeErrorFromErr(w, err, "")
 		return
@@ -350,8 +372,8 @@ func (s *Server) addGroupMember(w http.ResponseWriter, r *http.Request, groupID 
 		ValidationError(w, "memberType is required", nil)
 		return
 	}
-	if req.MemberType != store.GroupMemberTypeUser && req.MemberType != store.GroupMemberTypeGroup {
-		ValidationError(w, "memberType must be 'user' or 'group'", nil)
+	if req.MemberType != store.GroupMemberTypeUser && req.MemberType != store.GroupMemberTypeGroup && req.MemberType != store.GroupMemberTypeAgent {
+		ValidationError(w, "memberType must be 'user', 'group', or 'agent'", nil)
 		return
 	}
 	if req.MemberID == "" {
@@ -412,7 +434,7 @@ func (s *Server) handleGroupMemberByID(w http.ResponseWriter, r *http.Request, g
 	memberType := parts[0]
 	memberID := parts[1]
 
-	if memberType != store.GroupMemberTypeUser && memberType != store.GroupMemberTypeGroup {
+	if memberType != store.GroupMemberTypeUser && memberType != store.GroupMemberTypeGroup && memberType != store.GroupMemberTypeAgent {
 		NotFound(w, "Member")
 		return
 	}

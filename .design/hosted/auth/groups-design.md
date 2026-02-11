@@ -1059,12 +1059,12 @@ All principal and group operations are logged:
 - [x] Implement database migration via Ent auto-migration
 
 ### Phase 2: Group Operations
-- [ ] Implement explicit group CRUD using Ent client
-- [ ] Implement group membership add/remove with cycle detection
-- [ ] Implement agent-as-member support in group membership
-- [ ] Add `group_type` discriminator and validation (reject manual membership changes on grove groups)
-- [ ] Write adapter layer bridging `store.GroupStore` interface to Ent client
-- [ ] Update `handlers_groups.go` to support `principalType: "agent"`
+- [x] Implement explicit group CRUD using Ent client
+- [x] Implement group membership add/remove with cycle detection
+- [x] Implement agent-as-member support in group membership
+- [x] Add `group_type` discriminator and validation (reject manual membership changes on grove groups)
+- [x] Write adapter layer bridging `store.GroupStore` interface to Ent client
+- [x] Update `handlers_groups.go` to support `principalType: "agent"`
 
 ### Phase 3: Dynamic Grove Groups
 - [ ] Implement automatic grove group creation on grove registration
