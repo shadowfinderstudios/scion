@@ -508,7 +508,7 @@ cli: CLI {
 }
 harness: Harness.DiscoverAuth()\nAuthProvider.GetAuthConfig()
 container: Container {
-  tooltip: Available as $ANTHROPIC_API_KEY, etc.
+  tooltip: Available as \$ANTHROPIC_API_KEY, etc.
 }
 
 host -> cli
@@ -549,7 +549,7 @@ CLI: CLI
 Hub: Hub
 Broker: Runtime Broker
 
-CLI -> Hub: POST /groves/{id}/agents
+CLI -> Hub: "POST /groves/{id}/agents"
 Hub -> Hub: 1. Validate auth\n2. Resolve template\n3. Select broker\n4. Resolve env/secrets\n5. Create agent record (provisioning)
 Hub -> Broker: POST /api/v1/agents\n(HTTP or via WS tunnel)
 Broker -> Broker: 6. Hydrate template\n7. ProvisionAgent()\n8. Runtime.Run()
