@@ -69,10 +69,21 @@ func LoadHarnessConfigDir(dirPath string) (*HarnessConfigDir, error) {
 	}, nil
 }
 
-// FindHarnessConfigDir resolves a harness-config by name, checking grove-level
-// then global directories.
-func FindHarnessConfigDir(name string, grovePath string) (*HarnessConfigDir, error) {
-	// Check grove-level first
+// FindHarnessConfigDir resolves a harness-config by name, checking template-level,
+// grove-level, then global directories.
+// Optional templatePaths specify template directories whose harness-configs/
+// subdirectories are checked first (highest precedence), per the harness-agnostic
+// template design (§3.4).
+func FindHarnessConfigDir(name string, grovePath string, templatePaths ...string) (*HarnessConfigDir, error) {
+	// Check template-level first (highest precedence)
+	for _, tplPath := range templatePaths {
+		tplHarnessConfigDir := filepath.Join(tplPath, harnessConfigsDirName, name)
+		if info, err := os.Stat(tplHarnessConfigDir); err == nil && info.IsDir() {
+			return LoadHarnessConfigDir(tplHarnessConfigDir)
+		}
+	}
+
+	// Check grove-level
 	if grovePath != "" {
 		groveHarnessConfigDir := filepath.Join(grovePath, harnessConfigsDirName, name)
 		if info, err := os.Stat(groveHarnessConfigDir); err == nil && info.IsDir() {

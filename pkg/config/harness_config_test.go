@@ -134,6 +134,93 @@ user: scion
 	}
 }
 
+func TestFindHarnessConfigDir_TemplatePaths(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Override HOME so global dir resolves to our temp dir
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	// Setup a template with a custom harness-config
+	templateDir := filepath.Join(tmpDir, "templates", "web-dev")
+	tplHCDir := filepath.Join(templateDir, harnessConfigsDirName, "claude-web")
+	if err := os.MkdirAll(tplHCDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	tplConfigYAML := `harness: claude
+image: claude-web-image:latest
+user: scion
+`
+	if err := os.WriteFile(filepath.Join(tplHCDir, "config.yaml"), []byte(tplConfigYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test: template-only harness-config is found
+	hc, err := FindHarnessConfigDir("claude-web", "", templateDir)
+	if err != nil {
+		t.Fatalf("FindHarnessConfigDir with template path failed: %v", err)
+	}
+	if hc.Name != "claude-web" {
+		t.Errorf("expected name 'claude-web', got %q", hc.Name)
+	}
+	if hc.Config.Image != "claude-web-image:latest" {
+		t.Errorf("expected template image, got %q", hc.Config.Image)
+	}
+
+	// Test: template harness-config takes precedence over global
+	globalHCDir := filepath.Join(tmpDir, DotScion, harnessConfigsDirName, "claude-web")
+	if err := os.MkdirAll(globalHCDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	globalConfigYAML := `harness: claude
+image: global-claude-web:latest
+user: scion
+`
+	if err := os.WriteFile(filepath.Join(globalHCDir, "config.yaml"), []byte(globalConfigYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hc, err = FindHarnessConfigDir("claude-web", "", templateDir)
+	if err != nil {
+		t.Fatalf("FindHarnessConfigDir with template+global failed: %v", err)
+	}
+	if hc.Config.Image != "claude-web-image:latest" {
+		t.Errorf("expected template image to take precedence, got %q", hc.Config.Image)
+	}
+
+	// Test: template harness-config takes precedence over grove-level too
+	grovePath := filepath.Join(tmpDir, "grove")
+	groveHCDir := filepath.Join(grovePath, harnessConfigsDirName, "claude-web")
+	if err := os.MkdirAll(groveHCDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	groveConfigYAML := `harness: claude
+image: grove-claude-web:latest
+user: scion
+`
+	if err := os.WriteFile(filepath.Join(groveHCDir, "config.yaml"), []byte(groveConfigYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hc, err = FindHarnessConfigDir("claude-web", grovePath, templateDir)
+	if err != nil {
+		t.Fatalf("FindHarnessConfigDir with template+grove+global failed: %v", err)
+	}
+	if hc.Config.Image != "claude-web-image:latest" {
+		t.Errorf("expected template image to take precedence over grove, got %q", hc.Config.Image)
+	}
+
+	// Test: without template paths, falls back to grove then global
+	hc, err = FindHarnessConfigDir("claude-web", grovePath)
+	if err != nil {
+		t.Fatalf("FindHarnessConfigDir without template path failed: %v", err)
+	}
+	if hc.Config.Image != "grove-claude-web:latest" {
+		t.Errorf("expected grove image without template path, got %q", hc.Config.Image)
+	}
+}
+
 func TestListHarnessConfigDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 

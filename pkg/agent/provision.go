@@ -294,8 +294,12 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 		return "", "", nil, fmt.Errorf("no harness-config resolved. Specify --harness-config, set default_harness_config in the template, or set default_harness_config in settings")
 	}
 
-	// 2c. Load harness-config from disk
-	hcDir, err := config.FindHarnessConfigDir(harnessConfigName, grovePath)
+	// 2c. Load harness-config from disk (check template dirs first)
+	var templatePaths []string
+	for _, tpl := range chain {
+		templatePaths = append(templatePaths, tpl.Path)
+	}
+	hcDir, err := config.FindHarnessConfigDir(harnessConfigName, grovePath, templatePaths...)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to find harness-config %q: %w", harnessConfigName, err)
 	}
