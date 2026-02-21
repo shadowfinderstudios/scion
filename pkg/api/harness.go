@@ -58,4 +58,10 @@ type Harness interface {
 	// the harness's native telemetry output to the local OTLP collector
 	// (localhost:4317). These are injected only when telemetry is enabled.
 	GetTelemetryEnv() map[string]string
+
+	// RequiredEnvKeys returns the environment variable keys that must be present
+	// for this harness to function. The authSelectedType parameter allows the
+	// harness to vary requirements by authentication method (e.g., "gemini-api-key"
+	// vs "vertex-ai"). Returns nil if no env keys are required.
+	RequiredEnvKeys(authSelectedType string) []string
 }

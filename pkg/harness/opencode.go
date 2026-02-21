@@ -127,6 +127,10 @@ func (o *OpenCode) InjectAgentInstructions(agentHome string, content []byte) err
 	return os.WriteFile(target, content, 0644)
 }
 
+func (o *OpenCode) RequiredEnvKeys(authSelectedType string) []string {
+	return []string{"ANTHROPIC_API_KEY"}
+}
+
 func (o *OpenCode) InjectSystemPrompt(agentHome string, content []byte) error {
 	// OpenCode has no native system prompt support — downgrade by prepending to AGENTS.md
 	agentsPath := filepath.Join(agentHome, "AGENTS.md")

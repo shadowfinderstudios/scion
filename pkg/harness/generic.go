@@ -188,6 +188,10 @@ func (g *Generic) InjectAgentInstructions(agentHome string, content []byte) erro
 	return os.WriteFile(target, content, 0644)
 }
 
+func (g *Generic) RequiredEnvKeys(authSelectedType string) []string {
+	return nil
+}
+
 func (g *Generic) InjectSystemPrompt(agentHome string, content []byte) error {
 	target := filepath.Join(agentHome, ".scion", "system_prompt.md")
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {

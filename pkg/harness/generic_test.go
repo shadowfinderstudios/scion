@@ -117,6 +117,15 @@ func TestGenericInjectAgentInstructions(t *testing.T) {
 	}
 }
 
+func TestGenericRequiredEnvKeys(t *testing.T) {
+	g := &Generic{}
+
+	got := g.RequiredEnvKeys("")
+	if got != nil {
+		t.Errorf("RequiredEnvKeys() = %v, want nil", got)
+	}
+}
+
 func TestGenericInjectSystemPrompt(t *testing.T) {
 	agentHome := t.TempDir()
 	g := &Generic{}

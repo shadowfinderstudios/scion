@@ -122,6 +122,15 @@ func TestCodexInjectAgentInstructions(t *testing.T) {
 	}
 }
 
+func TestCodexRequiredEnvKeys(t *testing.T) {
+	c := &Codex{}
+
+	got := c.RequiredEnvKeys("")
+	if got != nil {
+		t.Errorf("RequiredEnvKeys() = %v, want nil", got)
+	}
+}
+
 func TestCodexInjectSystemPrompt(t *testing.T) {
 	agentHome := t.TempDir()
 	c := &Codex{}

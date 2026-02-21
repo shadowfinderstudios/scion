@@ -159,6 +159,37 @@ func TestGeminiInjectAgentInstructions(t *testing.T) {
 	}
 }
 
+func TestGeminiRequiredEnvKeys(t *testing.T) {
+	g := &GeminiCLI{}
+
+	tests := []struct {
+		name             string
+		authSelectedType string
+		want             []string
+	}{
+		{"gemini-api-key", "gemini-api-key", []string{"GEMINI_API_KEY"}},
+		{"vertex-ai", "vertex-ai", []string{"GOOGLE_CLOUD_PROJECT"}},
+		{"oauth-personal", "oauth-personal", nil},
+		{"compute-default-credentials", "compute-default-credentials", nil},
+		{"empty (default)", "", []string{"GEMINI_API_KEY"}},
+		{"unknown type", "something-else", []string{"GEMINI_API_KEY"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := g.RequiredEnvKeys(tt.authSelectedType)
+			if len(got) != len(tt.want) {
+				t.Fatalf("RequiredEnvKeys(%q) = %v, want %v", tt.authSelectedType, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("RequiredEnvKeys(%q)[%d] = %q, want %q", tt.authSelectedType, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestGeminiInjectSystemPrompt(t *testing.T) {
 	agentHome := t.TempDir()
 	g := &GeminiCLI{}

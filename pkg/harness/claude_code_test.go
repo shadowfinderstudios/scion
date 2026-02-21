@@ -163,6 +163,21 @@ func TestClaudeInjectAgentInstructions(t *testing.T) {
 	}
 }
 
+func TestClaudeRequiredEnvKeys(t *testing.T) {
+	c := &ClaudeCode{}
+
+	got := c.RequiredEnvKeys("")
+	if len(got) != 1 || got[0] != "ANTHROPIC_API_KEY" {
+		t.Errorf("RequiredEnvKeys() = %v, want [ANTHROPIC_API_KEY]", got)
+	}
+
+	// Auth type should not change the result for Claude
+	got = c.RequiredEnvKeys("some-auth-type")
+	if len(got) != 1 || got[0] != "ANTHROPIC_API_KEY" {
+		t.Errorf("RequiredEnvKeys(some-auth-type) = %v, want [ANTHROPIC_API_KEY]", got)
+	}
+}
+
 func TestClaudeInjectSystemPrompt(t *testing.T) {
 	agentHome := t.TempDir()
 	c := &ClaudeCode{}

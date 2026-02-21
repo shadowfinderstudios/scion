@@ -396,6 +396,20 @@ func (g *GeminiCLI) GetTelemetryEnv() map[string]string {
 	}
 }
 
+func (g *GeminiCLI) RequiredEnvKeys(authSelectedType string) []string {
+	switch authSelectedType {
+	case "gemini-api-key":
+		return []string{"GEMINI_API_KEY"}
+	case "vertex-ai":
+		return []string{"GOOGLE_CLOUD_PROJECT"}
+	case "oauth-personal", "compute-default-credentials":
+		return nil
+	default:
+		// Default auth type for gemini is api-key based
+		return []string{"GEMINI_API_KEY"}
+	}
+}
+
 func (g *GeminiCLI) InjectSystemPrompt(agentHome string, content []byte) error {
 	target := filepath.Join(agentHome, ".gemini", "system_prompt.md")
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {

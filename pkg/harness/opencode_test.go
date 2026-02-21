@@ -40,6 +40,15 @@ func TestOpenCodeInjectAgentInstructions(t *testing.T) {
 	}
 }
 
+func TestOpenCodeRequiredEnvKeys(t *testing.T) {
+	o := &OpenCode{}
+
+	got := o.RequiredEnvKeys("")
+	if len(got) != 1 || got[0] != "ANTHROPIC_API_KEY" {
+		t.Errorf("RequiredEnvKeys() = %v, want [ANTHROPIC_API_KEY]", got)
+	}
+}
+
 func TestOpenCodeInjectSystemPrompt(t *testing.T) {
 	agentHome := t.TempDir()
 	o := &OpenCode{}

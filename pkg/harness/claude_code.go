@@ -173,6 +173,10 @@ func (c *ClaudeCode) GetTelemetryEnv() map[string]string {
 	}
 }
 
+func (c *ClaudeCode) RequiredEnvKeys(authSelectedType string) []string {
+	return []string{"ANTHROPIC_API_KEY"}
+}
+
 func (c *ClaudeCode) InjectSystemPrompt(agentHome string, content []byte) error {
 	// System prompt is not yet supported for the Claude harness.
 	return nil

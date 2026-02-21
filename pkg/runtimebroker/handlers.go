@@ -28,6 +28,7 @@ import (
 	"github.com/ptone/scion-agent/pkg/api"
 	"github.com/ptone/scion-agent/pkg/config"
 	"github.com/ptone/scion-agent/pkg/gcp"
+	"github.com/ptone/scion-agent/pkg/harness"
 	"github.com/ptone/scion-agent/pkg/templatecache"
 )
 
@@ -916,48 +917,72 @@ func (s *Server) checkAgentPrompt(w http.ResponseWriter, r *http.Request, id str
 }
 
 // extractRequiredEnvKeys determines the set of env keys required by the agent's
-// template and settings profile. Keys with empty values in the settings config
-// indicate required-but-unsatisfied variables.
+// harness and settings profile. It uses a two-phase approach:
+//
+// Phase 1 (harness-aware): Resolves the active harness-config name, loads the
+// on-disk harness-config directory to determine the harness type and auth method,
+// then calls the harness's RequiredEnvKeys() method to get intrinsic requirements.
+//
+// Phase 2 (settings-based): Extracts keys with empty values from settings
+// harness_configs[*].env and profiles[*].env, allowing users to declare custom
+// env requirements.
 func (s *Server) extractRequiredEnvKeys(req CreateAgentRequest) []string {
 	required := make(map[string]struct{})
 
-	// Load settings from grove path if available
+	var settings *config.VersionedSettings
 	if req.GrovePath != "" {
-		settings, _, err := config.LoadEffectiveSettings(req.GrovePath)
-		if err == nil && settings != nil {
-			profileName := ""
-			if req.Config != nil {
-				profileName = req.Config.Profile
-			}
-			if profileName == "" {
-				profileName = settings.ActiveProfile
-			}
+		vs, _, err := config.LoadEffectiveSettings(req.GrovePath)
+		if err == nil {
+			settings = vs
+		}
+	}
 
-			// Get profile env keys
-			if profileName != "" && settings.Profiles != nil {
-				if profile, ok := settings.Profiles[profileName]; ok {
-					for k, v := range profile.Env {
+	profileName := ""
+	if req.Config != nil {
+		profileName = req.Config.Profile
+	}
+	if profileName == "" && settings != nil {
+		profileName = settings.ActiveProfile
+	}
+
+	// Phase 1: Harness-aware env key extraction
+	harnessConfigName := s.resolveHarnessConfigName(req, settings)
+	if harnessConfigName != "" {
+		harnessName, authType := s.resolveHarnessIdentity(harnessConfigName, req.GrovePath, settings, req.Config)
+		if harnessName != "" {
+			h := harness.New(harnessName)
+			for _, key := range h.RequiredEnvKeys(authType) {
+				required[key] = struct{}{}
+			}
+		}
+	}
+
+	// Phase 2: Settings-based empty-value env key extraction (preserved)
+	if settings != nil {
+		// Get profile env keys
+		if profileName != "" && settings.Profiles != nil {
+			if profile, ok := settings.Profiles[profileName]; ok {
+				for k, v := range profile.Env {
+					if v == "" {
+						required[k] = struct{}{}
+					}
+				}
+				// Check harness overrides within the profile
+				for _, override := range profile.HarnessOverrides {
+					for k, v := range override.Env {
 						if v == "" {
 							required[k] = struct{}{}
 						}
 					}
-					// Check harness overrides within the profile
-					for _, override := range profile.HarnessOverrides {
-						for k, v := range override.Env {
-							if v == "" {
-								required[k] = struct{}{}
-							}
-						}
-					}
 				}
 			}
+		}
 
-			// Get harness config env keys
-			for _, hcfg := range settings.HarnessConfigs {
-				for k, v := range hcfg.Env {
-					if v == "" {
-						required[k] = struct{}{}
-					}
+		// Get harness config env keys
+		for _, hcfg := range settings.HarnessConfigs {
+			for k, v := range hcfg.Env {
+				if v == "" {
+					required[k] = struct{}{}
 				}
 			}
 		}
@@ -968,6 +993,105 @@ func (s *Server) extractRequiredEnvKeys(req CreateAgentRequest) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// resolveHarnessConfigName determines which harness-config to use for the agent.
+// Resolution chain:
+//  1. req.Config.Harness (explicit harness override)
+//  2. req.Config.Template (if it matches a valid harness-config directory)
+//  3. profile's DefaultHarnessConfig
+//  4. settings' DefaultHarnessConfig
+func (s *Server) resolveHarnessConfigName(req CreateAgentRequest, settings *config.VersionedSettings) string {
+	// 1. Explicit harness in config
+	if req.Config != nil && req.Config.Harness != "" {
+		return req.Config.Harness
+	}
+
+	// 2. Template name that matches an on-disk harness-config directory
+	if req.Config != nil && req.Config.Template != "" {
+		if req.GrovePath != "" {
+			if _, err := config.FindHarnessConfigDir(req.Config.Template, req.GrovePath); err == nil {
+				return req.Config.Template
+			}
+		}
+
+		// 3. Template name that matches a settings harness_configs entry
+		if settings != nil {
+			if _, ok := settings.HarnessConfigs[req.Config.Template]; ok {
+				return req.Config.Template
+			}
+		}
+	}
+
+	if settings == nil {
+		return ""
+	}
+
+	// Resolve profile name
+	profileName := ""
+	if req.Config != nil {
+		profileName = req.Config.Profile
+	}
+	if profileName == "" {
+		profileName = settings.ActiveProfile
+	}
+
+	// 4. Profile's DefaultHarnessConfig
+	if profileName != "" {
+		if profile, ok := settings.Profiles[profileName]; ok {
+			if profile.DefaultHarnessConfig != "" {
+				return profile.DefaultHarnessConfig
+			}
+		}
+	}
+
+	// 5. Settings' DefaultHarnessConfig
+	if settings.DefaultHarnessConfig != "" {
+		return settings.DefaultHarnessConfig
+	}
+
+	return ""
+}
+
+// resolveHarnessIdentity loads the on-disk harness-config directory and applies
+// settings overrides to determine the harness name and auth_selected_type.
+func (s *Server) resolveHarnessIdentity(name, grovePath string, settings *config.VersionedSettings, reqConfig *CreateAgentConfig) (harnessName, authSelectedType string) {
+	// Try loading from on-disk harness-config directory
+	if grovePath != "" {
+		if hcDir, err := config.FindHarnessConfigDir(name, grovePath); err == nil {
+			harnessName = hcDir.Config.Harness
+			authSelectedType = hcDir.Config.AuthSelectedType
+		}
+	}
+
+	// If no on-disk config found, check if the name itself is a known harness
+	if harnessName == "" {
+		// Check if the name matches a settings harness-config entry
+		if settings != nil {
+			if hcEntry, ok := settings.HarnessConfigs[name]; ok {
+				harnessName = hcEntry.Harness
+				authSelectedType = hcEntry.AuthSelectedType
+			}
+		}
+		// Fall back to treating the name as a harness name directly
+		if harnessName == "" {
+			harnessName = name
+		}
+	}
+
+	// Apply settings-level overrides via ResolveHarnessConfig
+	if settings != nil {
+		profileName := ""
+		if reqConfig != nil {
+			profileName = reqConfig.Profile
+		}
+		resolved, err := settings.ResolveHarnessConfig(profileName, name)
+		if err == nil && resolved.AuthSelectedType != "" {
+			authSelectedType = resolved.AuthSelectedType
+		}
+	}
+
+	return harnessName, authSelectedType
 }
 
 // finalizeEnv handles the second phase of env-gather: receiving gathered env vars

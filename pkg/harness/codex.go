@@ -126,6 +126,10 @@ func (c *Codex) InjectAgentInstructions(agentHome string, content []byte) error 
 	return os.WriteFile(target, content, 0644)
 }
 
+func (c *Codex) RequiredEnvKeys(authSelectedType string) []string {
+	return nil
+}
+
 func (c *Codex) InjectSystemPrompt(agentHome string, content []byte) error {
 	// Codex has no native system prompt support — downgrade by prepending to AGENTS.md
 	agentsPath := filepath.Join(agentHome, "AGENTS.md")
