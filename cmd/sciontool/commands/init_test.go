@@ -306,6 +306,58 @@ func TestSanitizeGitOutput_LongToken(t *testing.T) {
 	}
 }
 
+func TestUseDirectPasswdEdit(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		expected bool
+	}{
+		{
+			name:     "no env vars set",
+			envVars:  map[string]string{},
+			expected: false,
+		},
+		{
+			name:     "container=podman",
+			envVars:  map[string]string{"container": "podman"},
+			expected: true,
+		},
+		{
+			name:     "container=docker (not podman)",
+			envVars:  map[string]string{"container": "docker"},
+			expected: false,
+		},
+		{
+			name:     "SCION_ALT_USERMOD set",
+			envVars:  map[string]string{"SCION_ALT_USERMOD": "1"},
+			expected: true,
+		},
+		{
+			name:     "both set",
+			envVars:  map[string]string{"container": "podman", "SCION_ALT_USERMOD": "1"},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear both env vars, then set what the test needs
+			t.Setenv("container", "")
+			t.Setenv("SCION_ALT_USERMOD", "")
+			os.Unsetenv("container")
+			os.Unsetenv("SCION_ALT_USERMOD")
+			for k, v := range tt.envVars {
+				t.Setenv(k, v)
+			}
+
+			result := useDirectPasswdEdit()
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestGitCloneWorkspace_DefaultEnvValues(t *testing.T) {
 	// Set SCION_GIT_CLONE_URL to trigger the clone path, but use a URL
 	// that will cause a predictable early failure (non-existent host).

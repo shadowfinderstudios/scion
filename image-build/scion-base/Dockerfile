@@ -66,6 +66,9 @@ RUN useradd -m -s /bin/zsh -u 1000 scion && \
     chmod 0440 /etc/sudoers.d/scion
 
 # Set ownership for npm global directory
+# TODO: Consider making npm-global world read-write (chmod) instead of chown
+# to scion. This would decouple it from the scion UID and avoid any ownership
+# concerns when the UID is remapped at container start.
 RUN chown -R scion:scion /usr/local/share/npm-global
 
 # Note: Container starts as root to allow sciontool init to adjust

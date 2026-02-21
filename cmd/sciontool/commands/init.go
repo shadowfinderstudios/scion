@@ -434,15 +434,23 @@ func setupHostUser() (int, int) {
 
 	log.Info("Adjusting scion user to UID=%d, GID=%d", uid, gid)
 
-	// Modify group first (if different from current)
-	if err := exec.Command("groupmod", "-o", "-g", hostGID, "scion").Run(); err != nil {
-		log.Error("Failed to modify scion group to %s: %v", hostGID, err)
-	}
+	if useDirectPasswdEdit() {
+		log.Info("Using direct /etc/passwd edit (avoiding slow usermod on this runtime)")
+		if err := directSetUID("scion", hostUID, hostGID); err != nil {
+			log.Error("Direct passwd/group edit failed: %v", err)
+			return 0, 0
+		}
+	} else {
+		// Modify group first (if different from current)
+		if err := exec.Command("groupmod", "-o", "-g", hostGID, "scion").Run(); err != nil {
+			log.Error("Failed to modify scion group to %s: %v", hostGID, err)
+		}
 
-	// Modify user UID and primary group
-	if err := exec.Command("usermod", "-o", "-u", hostUID, "-g", hostGID, "scion").Run(); err != nil {
-		log.Error("Failed to modify scion user to UID %s, GID %s: %v", hostUID, hostGID, err)
-		return 0, 0
+		// Modify user UID and primary group
+		if err := exec.Command("usermod", "-o", "-u", hostUID, "-g", hostGID, "scion").Run(); err != nil {
+			log.Error("Failed to modify scion user to UID %s, GID %s: %v", hostUID, hostGID, err)
+			return 0, 0
+		}
 	}
 
 	// Verify the change
@@ -453,6 +461,74 @@ func setupHostUser() (int, int) {
 	}
 
 	return uid, gid
+}
+
+// useDirectPasswdEdit returns true when usermod should be avoided in favor of
+// direct /etc/passwd and /etc/group editing. This is needed on runtimes like
+// Podman where usermod's recursive chown is extremely slow due to fuse-overlayfs.
+func useDirectPasswdEdit() bool {
+	// Podman sets container=podman in the environment
+	if os.Getenv("container") == "podman" {
+		log.Debug("Detected Podman runtime (container=podman), using direct passwd edit")
+		return true
+	}
+	// Allow explicit opt-in via SCION_ALT_USERMOD
+	if os.Getenv("SCION_ALT_USERMOD") != "" {
+		log.Debug("SCION_ALT_USERMOD set, using direct passwd edit")
+		return true
+	}
+	return false
+}
+
+// directSetUID modifies /etc/passwd and /etc/group directly to change a user's
+// UID and GID without the recursive chown that usermod performs. This also
+// chowns the user's home directory and its immediate contents so ownership is
+// correct. The home directory should only contain skeleton files from useradd,
+// so this is fast even on fuse-overlayfs.
+func directSetUID(username, newUID, newGID string) error {
+	// Update /etc/group: replace the GID (3rd field) for the matching group
+	groupSed := exec.Command("sed", "-i", "-E",
+		fmt.Sprintf(`s/^(%s:x:)[0-9]+:/\1%s:/`, username, newGID),
+		"/etc/group")
+	if out, err := groupSed.CombinedOutput(); err != nil {
+		return fmt.Errorf("sed /etc/group: %w (output: %s)", err, string(out))
+	}
+
+	// Update /etc/passwd: replace both UID (3rd field) and GID (4th field)
+	// Format: username:x:UID:GID:...
+	passwdSed := exec.Command("sed", "-i", "-E",
+		fmt.Sprintf(`s/^(%s:x:)[0-9]+:[0-9]+:/\1%s:%s:/`, username, newUID, newGID),
+		"/etc/passwd")
+	if out, err := passwdSed.CombinedOutput(); err != nil {
+		return fmt.Errorf("sed /etc/passwd: %w (output: %s)", err, string(out))
+	}
+
+	// Chown the home directory and its immediate contents (skeleton files).
+	// We avoid a deep recursive walk since that's the expensive part of
+	// usermod on fuse-overlayfs. The home dir should only have dotfiles
+	// from /etc/skel at this point.
+	uid := mustAtoi(newUID)
+	gid := mustAtoi(newGID)
+	homeDir := fmt.Sprintf("/home/%s", username)
+	if err := os.Chown(homeDir, uid, gid); err != nil {
+		log.Debug("Failed to chown home directory %s: %v", homeDir, err)
+	}
+	entries, err := os.ReadDir(homeDir)
+	if err == nil {
+		for _, e := range entries {
+			p := filepath.Join(homeDir, e.Name())
+			if err := os.Chown(p, uid, gid); err != nil {
+				log.Debug("Failed to chown %s: %v", p, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 // gitCloneWorkspace clones a git repository into /workspace when SCION_GIT_CLONE_URL
