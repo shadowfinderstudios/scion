@@ -214,6 +214,63 @@ DELETE /api/v1/agents/{id}?force=true
 
 This is useful for operators who want to immediately purge a specific agent.
 
+### 4.3 Broker-Side Agent Info Marking
+
+When the Hub dispatches a soft-delete to the runtime broker, the broker must update the local `agent-info.json` to reflect the deleted state before performing container cleanup. This ensures that the broker's local filesystem is consistent with the Hub even if the broker later loses connectivity.
+
+**Why this matters:** When the Hub's purge loop permanently removes the agent record from the database, it does not contact the broker—the purge is a Hub-internal DB operation. If the broker retained an `agent-info.json` with a non-deleted status, local CLI listing (`scion ls` in local/no-hub mode) would show a stale agent that no longer exists on the Hub.
+
+**Broker delete handler changes** (`pkg/runtimebroker/handlers.go`):
+
+When the Hub dispatches a delete with soft-delete context (indicated by a `softDelete=true` query parameter and a `deletedAt` timestamp), the broker's delete handler updates `agent-info.json` before proceeding with container cleanup:
+
+```
+DELETE /api/v1/agents/{id}?deleteFiles=true&removeBranch=true&softDelete=true&deletedAt=2026-02-22T10:00:00Z
+```
+
+```go
+func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, id string) {
+    // ... existing logic ...
+
+    // If this is a soft-delete, mark agent-info.json before cleanup
+    softDelete := query.Get("softDelete") == "true"
+    if softDelete {
+        deletedAtStr := query.Get("deletedAt")
+        if deletedAtStr != "" {
+            if deletedAt, err := time.Parse(time.RFC3339, deletedAtStr); err == nil {
+                _ = agent.UpdateAgentConfig(id, grovePath, "deleted", "", "")
+                // Also write deletedAt to agent-info.json
+                _ = agent.UpdateAgentDeletedAt(id, grovePath, deletedAt)
+            }
+        }
+    }
+
+    // Proceed with container cleanup as normal...
+}
+```
+
+When `deleteFiles=true`, the entire agent directory is removed, so the `agent-info.json` update is moot. The marking only has a lasting effect when `deleteFiles=false` (agent files are preserved for potential restore).
+
+**Hub dispatch changes** (`pkg/hub/httpdispatcher.go`):
+
+`DispatchAgentDelete` passes the soft-delete context when retention is active:
+
+```go
+func (d *HTTPAgentDispatcher) DispatchAgentDelete(ctx context.Context, agent *store.Agent, deleteFiles, removeBranch, softDelete bool, deletedAt time.Time) error {
+    // ... existing logic, with softDelete and deletedAt appended as query parameters ...
+}
+```
+
+### 4.4 Purge and Disconnected Brokers
+
+The Hub purge loop (Section 7) only deletes records from the Hub database. It does not contact brokers. This is safe because:
+
+1. **Broker was online at soft-delete time**: The broker already received the delete dispatch, cleaned up the container, and (if `deleteFiles=false`) marked `agent-info.json` as deleted. No further broker action is needed at purge time.
+
+2. **Broker was offline at soft-delete time**: The Hub's `checkBrokerAvailability` would have rejected the delete request entirely (HTTP 503). The agent remains in its previous state—soft-delete never occurred.
+
+If a broker reconnects after a purge and attempts to sync agents, agents that were purged from the Hub will not be found. The broker should handle "not found" responses gracefully during sync (the agent was already cleaned up locally at soft-delete time).
+
 ---
 
 ## 5. Listing and Filtering
@@ -275,6 +332,24 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 ### 5.4 CLI List Command
 
 The `scion list` command gains a `--deleted` flag that sets `includeDeleted=true` (or `status=deleted` to show only deleted agents). By default, deleted agents are hidden.
+
+### 5.5 Local-Mode Deleted Agent Warning
+
+When the CLI lists agents in local mode (Hub unavailable or disabled), it reads `agent-info.json` from the filesystem. If an agent's `agent-info.json` has `status: "deleted"` and a `deletedAt` timestamp, the CLI should:
+
+1. Display the agent with a `deleted` status indicator.
+2. Print a warning: `"Agent '<name>' was deleted on the Hub (<deletedAt>) and may have been purged."`
+
+This addresses the case where a broker retains agent files (`deleteFiles=false`) but the Hub has since purged the database record. The warning informs the user that the agent's Hub record may no longer exist and the local files are remnants.
+
+```go
+// In pkg/agent/list.go, when reading agent-info.json:
+if info.Status == "deleted" && !info.DeletedAt.IsZero() {
+    agents[i].Warnings = append(agents[i].Warnings,
+        fmt.Sprintf("Agent was deleted on the Hub (%s) and may have been purged",
+            info.DeletedAt.Format("2006-01-02")))
+}
+```
 
 ---
 
@@ -437,7 +512,21 @@ The `AgentCount` computed field on `Grove` (populated during listing) should exc
 | List handler | `pkg/hub/handlers.go` | Pass `includeDeleted` query param to filter |
 | Restore handler | `pkg/hub/handlers.go` | New `restore` action on agent |
 | Purge loop | `pkg/hub/server.go` | Background goroutine for periodic purge |
+| Hub dispatcher | `pkg/hub/httpdispatcher.go` | Pass `softDelete` and `deletedAt` params to broker delete |
+| Broker delete handler | `pkg/runtimebroker/handlers.go` | Mark `agent-info.json` with deleted status before cleanup |
+| Agent info update | `pkg/agent/provision.go` | New `UpdateAgentDeletedAt` helper to write `deletedAt` to agent-info |
+| Local agent listing | `pkg/agent/list.go` | Emit warning for agents with `status: deleted` in agent-info |
 | CLI delete | `cmd/delete.go` | No change needed (backend handles soft delete transparently) |
 | CLI list | `cmd/list.go` | Add `--deleted` flag |
 | CLI restore | `cmd/restore.go` | New command to restore soft-deleted agents |
-| Tests | Various `_test.go` | Test soft delete, restore, purge, filter exclusion, force delete |
+| Tests | Various `_test.go` | Test soft delete, restore, purge, filter exclusion, force delete, broker-side marking |
+
+---
+
+## 11. Open Questions
+
+1. **Restore with `deleteFiles=true`**: When an agent is soft-deleted with `deleteFiles=true`, the container and workspace are removed immediately. Restoring such an agent recovers the Hub record (metadata, config, template association), but the agent would need to be fully re-provisioned to run again. Should `restore` automatically trigger re-provisioning, or should it just set the status to `stopped` and leave re-provisioning to a subsequent `scion start`?
+
+2. **`deleteFiles` default during soft-delete**: Currently `deleteFiles` is a user-controlled query parameter. When soft-delete retention is active, should we default `deleteFiles=false` to preserve workspace files for a more complete restore? Or should the user explicitly opt in to file retention? Defaulting to `deleteFiles=false` would make restore more useful but consume more disk on the broker.
+
+3. **Broker sync on reconnect**: When a broker reconnects to the Hub after being offline, should there be a reconciliation step where the broker reports its locally-known agents and the Hub responds with their current status (or confirms they've been purged)? This would clean up stale local state, but adds complexity. Currently out of scope but worth noting as a future enhancement.
