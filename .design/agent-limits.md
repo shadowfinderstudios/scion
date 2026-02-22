@@ -74,7 +74,7 @@ When `sciontool init` starts, it reads `SCION_MAX_DURATION` from the environment
 
 #### Timer Start Point
 
-The timer starts when the child process (harness) is successfully launched -- after `post-start` hooks complete. This means `max_duration` measures the agent's active working time, not container boot overhead.
+The timer starts when the child process (harness) is successfully launched -- after `post-start` hooks complete. This means `max_duration` measures the agent's active working time, not container boot overhead. The duration timer resets on resume (each run gets a fresh budget).
 
 #### Implementation Location
 
@@ -98,29 +98,38 @@ case <-durationTimer:
 }
 ```
 
-### 3.4. Turn Enforcement
+### 3.4. Turn and Model Call Enforcement
 
-#### What Counts as a Turn
+#### What Counts as a Turn vs a Model Call
 
-A "turn" is one full cycle of the LLM receiving input and producing a response. In the normalized event model, this corresponds to a pair of `agent-start` / `agent-end` events. The turn counter increments on each `agent-end` event (indicating the LLM has completed a response).
+Two separate counters are maintained, each with its own configurable limit:
 
-For harnesses that don't emit `agent-start`/`agent-end` (or emit them inconsistently), `model-end` is used as a fallback signal, since it directly indicates an LLM inference has completed.
+- **Turns** (`max_turns`): Counted on `agent-end` events. One "turn" is one full cycle of the LLM receiving input and producing a response, which may include many tool calls and sub-agent spawns. This controls **autonomy scope** -- how many high-level actions the agent can take.
+- **Model calls** (`max_model_calls`): Counted on `model-end` events. Each `model-end` corresponds to a single LLM API inference call. This controls **cost** -- directly correlating with API usage.
+
+Both counters are tracked independently. If either limit is hit, the agent transitions to `LIMITS_EXCEEDED`. For harnesses that don't emit `agent-end` events consistently, the `model-end` counter provides a reliable fallback enforcement mechanism.
+
+#### Resume Behavior
+
+All limit counters (turn count, model call count, and duration timer) reset when an agent is resumed. Each "run" gets a fresh budget. This matches the expected usage pattern where each resume typically brings a new task or continuation of work with renewed resource allocation.
 
 #### Mechanism
 
-Turn counting is implemented as a new handler registered in the hook event pipeline. Since `sciontool hook` is invoked as a separate process for each event (it is not a long-running daemon), the turn count must be persisted to disk between invocations.
+Turn and model call counting is implemented as a new handler registered in the hook event pipeline. Since `sciontool hook` is invoked as a separate process for each event (it is not a long-running daemon), the counts must be persisted to disk between invocations.
 
-**Turn state file**: `~/agent-limits.json`
+**Limit state file**: `~/agent-limits.json`
 
 ```json
 {
   "turn_count": 17,
+  "model_call_count": 42,
   "max_turns": 50,
+  "max_model_calls": 200,
   "started_at": "2026-02-22T10:30:00Z"
 }
 ```
 
-When a turn-incrementing event is received and the count meets or exceeds `max_turns`:
+When a count-incrementing event is received and the count meets or exceeds the corresponding limit:
 
 1. Write a clear log entry to `agent.log`.
 2. Set agent status to `LIMITS_EXCEEDED` in `agent-info.json`.
@@ -195,6 +204,8 @@ hubClient.UpdateStatus(ctx, hub.StatusUpdate{
 
 This allows the Hub UI and API consumers to display the reason the agent stopped. A new `ReportLimitsExceeded` convenience method is added to the Hub client alongside the existing `ReportError`, `ReportStopped`, etc.
 
+Limit status is also incorporated into the sciontool heartbeat/status update cycle to the Hub. The separate `agent-limits.json` file stores the raw counters locally, but the limit-exceeded status is communicated to the Hub via the standard status update mechanism (same endpoint used by heartbeats and other status changes).
+
 ### 3.8. Interaction with Existing States
 
 The `LIMITS_EXCEEDED` state has specific interactions with the status system:
@@ -206,12 +217,13 @@ The `LIMITS_EXCEEDED` state has specific interactions with the status system:
 
 ## 4. Implementation Plan
 
-### Phase 1: State and Status Infrastructure
+### Phase 1: State and Status Infrastructure ✓
 
-1. Add `StateLimitsExceeded` to `pkg/sciontool/hooks/types.go`.
-2. Add `StatusLimitsExceeded` to `pkg/sciontool/hub/client.go` with a `ReportLimitsExceeded` method.
-3. Update `isStickyStatus` in `handlers/status.go` to include `LIMITS_EXCEEDED`.
-4. Add a `sciontool status limits_exceeded` subcommand (for manual testing and potential future use by custom harnesses).
+1. ✓ Add `StateLimitsExceeded` to `pkg/sciontool/hooks/types.go`.
+2. ✓ Add `StatusLimitsExceeded` to `pkg/sciontool/hub/client.go` with a `ReportLimitsExceeded` method.
+3. ✓ Update `isStickyStatus` in `handlers/status.go` to include `LIMITS_EXCEEDED`.
+4. ✓ Update hub handler's tool-start check to also skip `LIMITS_EXCEEDED` (not just `COMPLETED`).
+5. ✓ Add a `sciontool status limits_exceeded` subcommand (for manual testing and potential future use by custom harnesses).
 
 ### Phase 2: Duration Enforcement in sciontool init
 
@@ -220,15 +232,16 @@ The `LIMITS_EXCEEDED` state has specific interactions with the status system:
 3. Implement `handleLimitsExceeded(limitType, message string)` that performs the status update, logging, Hub reporting, and child termination sequence.
 4. Exit with code 10 on limit-exceeded shutdown.
 
-### Phase 3: Turn Enforcement via Hook Handler
+### Phase 3: Turn and Model Call Enforcement via Hook Handler
 
 1. Create `pkg/sciontool/hooks/handlers/limits.go` containing a `LimitsHandler` that:
-   - Reads `SCION_MAX_TURNS` from the environment on construction.
-   - Maintains turn count in `~/agent-limits.json`.
-   - Increments on `agent-end` or `model-end` events.
-   - When the limit is reached: updates status, logs, reports to Hub, sends `SIGUSR1` to PID 1.
+   - Reads `SCION_MAX_TURNS` and `SCION_MAX_MODEL_CALLS` from the environment on construction.
+   - Maintains turn count and model call count in `~/agent-limits.json`.
+   - Increments turn count on `agent-end` events.
+   - Increments model call count on `model-end` events.
+   - When either limit is reached: updates status, logs, reports to Hub, sends `SIGUSR1` to PID 1.
 2. Register `LimitsHandler` in the hook event pipeline in `cmd/sciontool/commands/hook.go`.
-3. Initialize `agent-limits.json` during `post-start` in `init.go`.
+3. Initialize `agent-limits.json` during `post-start` in `init.go` (counters reset on each start/resume).
 
 ### Phase 4: Remove Host-Side Timer
 
@@ -248,6 +261,7 @@ The `LIMITS_EXCEEDED` state has specific interactions with the status system:
 ```yaml
 schema_version: "1"
 max_turns: 100
+max_model_calls: 500
 max_duration: "4h"
 ```
 
@@ -257,18 +271,19 @@ max_duration: "4h"
 # .scion/agents/my-agent/scion-agent.yaml
 schema_version: "1"
 max_turns: 25
+max_model_calls: 100
 max_duration: "30m"
 ```
 
 ### No Limits (Default)
 
-When neither `max_turns` nor `max_duration` is configured, no enforcement occurs. The agent runs until the harness exits naturally or is stopped manually.
+When none of `max_turns`, `max_model_calls`, or `max_duration` is configured, no enforcement occurs. The agent runs until the harness exits naturally or is stopped manually.
 
 ## 6. Testing Strategy
 
 ### Unit Tests
 
-- **LimitsHandler**: Test turn counting, file persistence, limit detection, and SIGUSR1 signaling (mock the signal send).
+- **LimitsHandler**: Test turn counting, model call counting, file persistence, limit detection, and SIGUSR1 signaling (mock the signal send).
 - **Status updates**: Verify `LIMITS_EXCEEDED` is sticky and interacts correctly with other states.
 - **Duration parsing**: Verify `SCION_MAX_DURATION` env var is parsed correctly for various formats.
 - **Exit codes**: Verify sciontool exits with code 10 on limit-exceeded.
@@ -277,13 +292,16 @@ When neither `max_turns` nor `max_duration` is configured, no enforcement occurs
 
 - **Duration limit**: Start an agent with `max_duration: "5s"`, verify it stops with `LIMITS_EXCEEDED` status and exit code 10.
 - **Turn limit**: Start an agent with `max_turns: 3`, verify it stops after 3 turns with correct status.
+- **Model call limit**: Start an agent with `max_model_calls: 10`, verify it stops after 10 model calls with correct status.
 - **No limits**: Start an agent with no limits configured, verify it runs and exits normally.
 - **Hub reporting**: With a mock Hub endpoint, verify the `limits_exceeded` status is reported with the correct message.
+- **Resume reset**: Start an agent, let it accumulate counts, stop it, resume it, and verify counters reset to 0.
 
 ### Manual Verification
 
 - `scion start --max-duration 1m <agent>` → agent stops after 1 minute, `scion list` shows `LIMITS_EXCEEDED`.
 - `scion start --max-turns 5 <agent>` → agent stops after 5 turns, `agent.log` contains the limits-exceeded entry.
+- `scion start --max-model-calls 20 <agent>` → agent stops after 20 model API calls.
 - `scion look <agent>` shows the limit-exceeded reason clearly.
 
 ## 7. Risks and Mitigations
@@ -293,60 +311,27 @@ When neither `max_turns` nor `max_duration` is configured, no enforcement occurs
 | Hook process crashes before sending SIGUSR1 (turn limit not enforced) | Duration limit acts as a backstop. Both limits should be configured for defense-in-depth. |
 | Race between turn limit and duration limit firing simultaneously | The `handleLimitsExceeded` function is idempotent -- multiple calls result in the same outcome. The first to set `LIMITS_EXCEEDED` wins (sticky status). |
 | `agent-limits.json` gets corrupted | Use atomic writes (write-to-temp + rename), matching the pattern used by `agent-info.json`. |
-| Harness doesn't emit `agent-end` events consistently | Fall back to `model-end` events for turn counting. Log a warning if neither event type is received after the session starts. |
+| Harness doesn't emit `agent-end` events consistently | The `max_model_calls` limit (counted on `model-end`) provides an independent enforcement mechanism. Both limits should be configured for defense-in-depth. |
 | Removing host-side timer before sciontool enforcement is deployed | Phase 4 (removal) depends on Phase 2 and 3 being deployed first. Both approaches can coexist temporarily -- the host-side timer acts as a fallback. |
 
-## 8. Open Questions
+## 8. Resolved Decisions
 
-### OQ1: What counts as a "turn"?
+### RD1: What counts as a "turn" — both `agent-end` and `model-end`
 
-The current design increments the turn counter on `agent-end` events, where one "turn" is one full LLM response cycle (which may include many tool calls and sub-invocations). An alternative is counting `model-end` events, which correspond to raw LLM API calls.
+Both counters are exposed as separate configurable limits: `max_turns` (counted on `agent-end`) and `max_model_calls` (counted on `model-end`). `max_turns` controls autonomy scope (coarser, user-facing concept of "the agent did one thing"), while `max_model_calls` controls cost (finer, directly correlates with API usage). If either limit is hit, the agent transitions to `LIMITS_EXCEEDED`.
 
-- **`agent-end` (proposed):** Coarser granularity. A single turn in Claude Code can involve dozens of tool calls and sub-agent spawns. Better maps to the user-facing concept of "the agent did one thing." Gives the agent room to work within each turn.
-- **`model-end`:** Finer granularity. Directly correlates with API cost. A `max_turns: 50` limit on `model-end` would be much more restrictive than the same limit on `agent-end`.
+### RD2: Resume behavior — all limits reset
 
-The right choice depends on whether the goal is **controlling cost** (prefer `model-end`) or **controlling autonomy scope** (prefer `agent-end`). A hybrid approach (expose both as `max_turns` and `max_model_calls`) adds configuration surface area.
+All limit counters (turn count, model call count, and duration timer) reset when an agent is resumed. Each "run" gets a fresh budget. This is the simplest approach and matches the expected usage pattern where each resume typically brings a new task.
 
-**Decision needed:** Which event should increment the counter? Or should both be configurable?
+### RD3: Turn state storage — separate file with Hub heartbeat inclusion
 
-### OQ2: Resume behavior -- do counters reset?
+Limit state is stored in a separate `~/agent-limits.json` file to avoid lock contention between the status handler and limits handler. The limit-exceeded status is communicated to the Hub via the standard status update mechanism (same endpoint used by heartbeats and other status changes), so the Hub always has visibility into limit state.
 
-The design does not address what happens to `turn_count` and the duration timer when an agent is stopped and later resumed via `scion attach` or `scion start --resume`.
+### RD4: Exit code — 10 confirmed
 
-- **Option A: Reset on resume.** Each "run" gets a fresh budget. Simple, but allows indefinite total resource consumption across multiple resumes.
-- **Option B: Accumulate across resumes.** The limits apply to the agent's total lifetime. Requires persisting the elapsed duration and turn count across container restarts. More complex, but provides a true total budget.
-- **Option C: Reset turns, accumulate duration.** Turns reset because each resume typically brings a new task. Duration accumulates because wall-clock cost is cumulative. Pragmatic middle ground.
+Exit code `10` is used for limit-exceeded exits. Codes 1-9 are generally safe for application use and 10 is unlikely to collide with container runtime conventions (Docker uses 125-127) or harness exit codes.
 
-**Decision needed:** What is the expected lifecycle model for limits when agents are resumed?
+### RD5: Graceful vs immediate — immediate for v1
 
-### OQ3: Turn state storage -- separate file or extend agent-info.json?
-
-The design introduces `~/agent-limits.json` for persisting turn count. An alternative is adding `turn_count` and `max_turns` fields directly to the existing `~/agent-info.json`.
-
-- **Separate file (proposed):** Avoids lock contention between the status handler and limits handler (both do atomic read-modify-write). Clear separation of concerns.
-- **Extend `agent-info.json`:** One fewer file to manage. Turn count is visible alongside status in a single read. But requires coordinating writes between two independent code paths, risking lost updates.
-
-**Decision needed:** Separate file or shared file?
-
-### OQ4: Exit code selection
-
-The design proposes exit code `10` for limit-exceeded exits. This is arbitrary and should be validated against:
-
-- Container runtime conventions (Docker uses 125-127 for internal errors, 128+N for signal exits).
-- Harness exit codes (Claude Code and Gemini CLI may use specific codes).
-- Any existing scion conventions for non-zero exits.
-
-Codes 1-9 are generally safe for application use. Code 10 is unlikely to collide but has no particular semantic convention behind it.
-
-**Decision needed:** Is exit code 10 acceptable, or should a different code be used?
-
-### OQ5: Graceful vs immediate turn limit enforcement
-
-When the turn limit is hit, the event arrives during a `sciontool hook` invocation -- meaning the harness is actively mid-execution. The current design sends `SIGUSR1` immediately, triggering `SIGTERM` to the harness.
-
-- **Immediate (proposed):** Simple. The harness gets SIGTERM and has the grace period to clean up. But the current response is interrupted mid-stream.
-- **Deferred/graceful:** Instead of signaling immediately, write a "limit reached" flag. The harness checks this flag (or sciontool injects a stop signal) at the next natural pause point (e.g., before the next prompt submission). The current response completes fully. Requires harness cooperation or a hook-level gate.
-
-The immediate approach is simpler and sufficient for a first implementation. Graceful enforcement could be added later if mid-response termination causes problems (e.g., uncommitted work).
-
-**Decision needed:** Is immediate termination acceptable for v1, with graceful as a future enhancement?
+Immediate termination via `SIGUSR1` → `SIGTERM` is used for the initial implementation. Graceful enforcement (completing the current response before stopping) is deferred as a future enhancement if mid-response termination causes problems with uncommitted work.
