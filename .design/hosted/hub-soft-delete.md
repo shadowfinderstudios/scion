@@ -44,6 +44,13 @@ type HubServerConfig struct {
     // "168h", "720h"). A value of "0" or "" means immediate deletion (no
     // soft delete). Default: "0".
     SoftDeleteRetention time.Duration `json:"softDeleteRetention" yaml:"softDeleteRetention" koanf:"softDeleteRetention"`
+
+    // SoftDeleteRetainFiles controls whether agent workspace files are
+    // preserved on the broker during soft-delete. When true, deleteFiles
+    // defaults to false for soft-deleted agents (files are kept for restore).
+    // When false (default), deleteFiles=true remains the default and files
+    // are removed immediately even during soft-delete.
+    SoftDeleteRetainFiles bool `json:"softDeleteRetainFiles" yaml:"softDeleteRetainFiles" koanf:"softDeleteRetainFiles"`
 }
 ```
 
@@ -55,6 +62,7 @@ In the versioned settings file (`settings.yaml`), this maps to:
 server:
   hub:
     soft_delete_retention: "168h"  # 7 days
+    soft_delete_retain_files: false  # default: remove files immediately
 ```
 
 The `V1ServerHubConfig` struct gains:
@@ -67,6 +75,9 @@ type V1ServerHubConfig struct {
 
     // SoftDeleteRetention is the retention period for soft-deleted agents.
     SoftDeleteRetention string `json:"soft_delete_retention,omitempty" yaml:"soft_delete_retention,omitempty" koanf:"soft_delete_retention"`
+
+    // SoftDeleteRetainFiles controls whether workspace files are preserved during soft-delete.
+    SoftDeleteRetainFiles *bool `json:"soft_delete_retain_files,omitempty" yaml:"soft_delete_retain_files,omitempty" koanf:"soft_delete_retain_files"`
 }
 ```
 
@@ -76,6 +87,7 @@ The retention can also be set via environment variable:
 
 ```
 SCION_SERVER_HUB_SOFT_DELETE_RETENTION=168h
+SCION_SERVER_HUB_SOFT_DELETE_RETAIN_FILES=true
 ```
 
 ### 2.4 ServerConfig Plumbing
@@ -91,6 +103,10 @@ type ServerConfig struct {
     // SoftDeleteRetention is the retention period for soft-deleted agents.
     // Zero means immediate hard delete (default behavior).
     SoftDeleteRetention time.Duration
+
+    // SoftDeleteRetainFiles controls whether workspace files are preserved
+    // on the broker during soft-delete. Default: false.
+    SoftDeleteRetainFiles bool
 }
 ```
 
@@ -98,18 +114,22 @@ type ServerConfig struct {
 
 ## 3. Agent Status: `deleted`
 
-### 3.1 New Status Constant
+### 3.1 New Status Constants
 
-A new agent status constant is added to the existing set:
+Two new agent status constants are added to the existing set:
 
 ```go
 // In pkg/store/models.go
 
 const (
     // ... existing statuses ...
-    AgentStatusDeleted = "deleted"
+    AgentStatusDeleted  = "deleted"
+    AgentStatusRestored = "restored"
 )
 ```
+
+- `deleted`: The agent has been soft-deleted and is awaiting purge.
+- `restored`: The agent was restored from `deleted` state. No container or runtime artifacts exist—the agent must be re-provisioned via `scion start` before it can run again. This is distinct from `stopped`, which implies a container previously existed and was halted.
 
 ### 3.2 New Timestamp Field
 
@@ -172,7 +192,9 @@ DELETE /api/v1/agents/{id}?deleteFiles=true&removeBranch=true
 **When retention > 0:**
 
 1. Verify broker availability (unchanged).
-2. Dispatch container/filesystem cleanup to the runtime broker (unchanged—runtime artifacts are always cleaned up immediately).
+2. Dispatch container/filesystem cleanup to the runtime broker. The `deleteFiles` behavior depends on the `SoftDeleteRetainFiles` hub setting:
+   - `SoftDeleteRetainFiles: false` (default): `deleteFiles` uses the caller-supplied value (default `true`). Files are removed immediately as today.
+   - `SoftDeleteRetainFiles: true`: `deleteFiles` is forced to `false` for soft-deletes, preserving workspace files on the broker for a more complete restore. The caller-supplied `deleteFiles` value is ignored.
 3. Instead of `store.DeleteAgent(id)`, call `store.UpdateAgent()` to set:
    - `Status` → `"deleted"`
    - `DeletedAt` → `time.Now()`
@@ -365,7 +387,7 @@ POST /api/v1/agents/{id}/restore
 
 This action:
 1. Verifies the agent exists and is in `deleted` status.
-2. Sets `Status` back to `stopped` (the agent's runtime artifacts are gone, so it cannot be `running`).
+2. Sets `Status` to `restored`. This status is distinct from `stopped` because no container or runtime artifacts exist—the agent must be re-provisioned via `scion start` before it can run again.
 3. Clears `DeletedAt` to zero value.
 4. Publishes an `AgentCreated` event to notify subscribers.
 5. Returns `200 OK` with the restored agent record.
@@ -385,7 +407,7 @@ func (s *Server) restoreAgent(w http.ResponseWriter, r *http.Request, id string)
         return
     }
 
-    agent.Status = store.AgentStatusStopped
+    agent.Status = store.AgentStatusRestored
     agent.DeletedAt = time.Time{}
     if err := s.store.UpdateAgent(ctx, agent); err != nil {
         writeErrorFromErr(w, err, "")
@@ -501,13 +523,13 @@ The `AgentCount` computed field on `Grove` (populated during listing) should exc
 
 | Component | File(s) | Change |
 |-----------|---------|--------|
-| Agent model | `pkg/store/models.go` | Add `AgentStatusDeleted` constant, `DeletedAt` field |
+| Agent model | `pkg/store/models.go` | Add `AgentStatusDeleted` and `AgentStatusRestored` constants, `DeletedAt` field |
 | API types | `pkg/api/types.go` | Add `DeletedAt` field to `AgentInfo` |
 | Store interface | `pkg/store/store.go` | Add `IncludeDeleted` to `AgentFilter`, add `PurgeDeletedAgents` method |
 | Store implementation | `pkg/store/sqlite.go` (or equivalent) | Implement filter exclusion, purge query, migration |
-| Hub config | `pkg/config/hub_config.go` | Add `SoftDeleteRetention` to `HubServerConfig` |
-| V1 settings | `pkg/config/settings_v1.go` | Add `SoftDeleteRetention` to `V1ServerHubConfig`, conversion logic |
-| Hub server config | `pkg/hub/server.go` | Add `SoftDeleteRetention` to `ServerConfig` |
+| Hub config | `pkg/config/hub_config.go` | Add `SoftDeleteRetention` and `SoftDeleteRetainFiles` to `HubServerConfig` |
+| V1 settings | `pkg/config/settings_v1.go` | Add `SoftDeleteRetention` and `SoftDeleteRetainFiles` to `V1ServerHubConfig`, conversion logic |
+| Hub server config | `pkg/hub/server.go` | Add `SoftDeleteRetention` and `SoftDeleteRetainFiles` to `ServerConfig` |
 | Delete handler | `pkg/hub/handlers.go` | Conditional soft vs hard delete, `force` parameter |
 | List handler | `pkg/hub/handlers.go` | Pass `includeDeleted` query param to filter |
 | Restore handler | `pkg/hub/handlers.go` | New `restore` action on agent |
@@ -523,10 +545,10 @@ The `AgentCount` computed field on `Grove` (populated during listing) should exc
 
 ---
 
-## 11. Open Questions
+## 11. Design Decisions
 
-1. **Restore with `deleteFiles=true`**: When an agent is soft-deleted with `deleteFiles=true`, the container and workspace are removed immediately. Restoring such an agent recovers the Hub record (metadata, config, template association), but the agent would need to be fully re-provisioned to run again. Should `restore` automatically trigger re-provisioning, or should it just set the status to `stopped` and leave re-provisioning to a subsequent `scion start`?
+1. **Restore sets `restored` status, not `stopped`**: Restored agents enter a new `restored` state rather than `stopped`. This makes it explicit that no container or runtime artifacts exist and the agent must be re-provisioned via `scion start`. Restore does not trigger automatic re-provisioning.
 
-2. **`deleteFiles` default during soft-delete**: Currently `deleteFiles` is a user-controlled query parameter. When soft-delete retention is active, should we default `deleteFiles=false` to preserve workspace files for a more complete restore? Or should the user explicitly opt in to file retention? Defaulting to `deleteFiles=false` would make restore more useful but consume more disk on the broker.
+2. **`deleteFiles=true` remains the default**: Files are removed immediately during soft-delete by default. Operators who want file retention for a more complete restore can enable `SoftDeleteRetainFiles` in hub settings, which forces `deleteFiles=false` for soft-deleted agents.
 
-3. **Broker sync on reconnect**: When a broker reconnects to the Hub after being offline, should there be a reconciliation step where the broker reports its locally-known agents and the Hub responds with their current status (or confirms they've been purged)? This would clean up stale local state, but adds complexity. Currently out of scope but worth noting as a future enhancement.
+3. **Broker sync on reconnect** (future enhancement): When a broker reconnects to the Hub after being offline, a reconciliation step could clean up stale local agent state by checking which agents have been purged on the Hub. This is out of scope for this iteration but noted as a future improvement.
