@@ -395,6 +395,7 @@ export class ScionPageAgentCreate extends LitElement {
             <label for="grove">Grove</label>
             <sl-select
               id="grove"
+              placeholder="Select a grove..."
               .value=${this.groveId}
               @sl-change=${(e: Event) => {
                 this.groveId = (e.target as HTMLElement & { value: string }).value;
@@ -410,6 +411,7 @@ export class ScionPageAgentCreate extends LitElement {
             <label for="template">Template</label>
             <sl-select
               id="template"
+              placeholder="Select a template..."
               .value=${this.templateId}
               @sl-change=${(e: Event) => this.onTemplateChange(e)}
             >
@@ -426,9 +428,10 @@ export class ScionPageAgentCreate extends LitElement {
           </div>
 
           <div class="form-field">
-            <label for="harness">Harness</label>
+            <label for="harness">Harness Config</label>
             <sl-select
               id="harness"
+              placeholder="Select a harness..."
               .value=${this.harness}
               @sl-change=${(e: Event) => {
                 this.harness = (e.target as HTMLElement & { value: string }).value;
@@ -439,13 +442,14 @@ export class ScionPageAgentCreate extends LitElement {
               <sl-option value="opencode">OpenCode</sl-option>
               <sl-option value="codex">Codex</sl-option>
             </sl-select>
-            <div class="hint">The LLM harness to use.</div>
+            <div class="hint">The LLM harness configuration to use.</div>
           </div>
 
           <div class="form-field">
             <label for="broker">Runtime Broker</label>
             <sl-select
               id="broker"
+              placeholder="Select a broker..."
               .value=${this.brokerId}
               @sl-change=${(e: Event) => {
                 this.brokerId = (e.target as HTMLElement & { value: string }).value;
