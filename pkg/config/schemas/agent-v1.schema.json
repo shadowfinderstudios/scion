@@ -82,12 +82,40 @@
       "type": "object",
       "description": "Gemini-specific configuration.",
       "properties": {
-        "auth_selected_type": { "type": "string" }
+        "auth_selectedType": { "type": "string" }
+      }
+    },
+    "hub": {
+      "type": "object",
+      "description": "Hub connection settings override for this agent/template. Takes highest priority over grove and server settings.",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "format": "uri",
+          "description": "Hub API endpoint URL for this agent."
+        }
       }
     },
     "telemetry": {
       "$ref": "#/$defs/telemetryConfig",
       "description": "Telemetry settings override for this template/agent. Merged on top of settings-level telemetry config."
+    },
+    "secrets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/requiredSecret" },
+      "description": "Required secrets for this agent/template."
+    },
+    "agent_instructions": {
+      "type": "string",
+      "description": "Agent instructions for harness-agnostic templates."
+    },
+    "system_prompt": {
+      "type": "string",
+      "description": "System prompt for harness-agnostic templates."
+    },
+    "default_harness_config": {
+      "type": "string",
+      "description": "Default harness config name for this template."
     },
     "kubernetes": {
       "type": "object",
@@ -95,8 +123,8 @@
       "properties": {
         "context": { "type": "string" },
         "namespace": { "type": "string" },
-        "runtime_class_name": { "type": "string" },
-        "service_account_name": { "type": "string" },
+        "runtimeClassName": { "type": "string" },
+        "serviceAccountName": { "type": "string" },
         "resources": {
           "type": "object",
           "properties": {
@@ -160,18 +188,34 @@
           "type": "string",
           "enum": ["no", "always", "on-failure"]
         },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Environment variables for the service."
+        },
         "ready_check": {
           "type": "object",
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["tcp", "http"]
+              "enum": ["tcp", "http", "delay"]
             },
             "target": { "type": "string" },
             "timeout": { "type": "string" }
           }
         }
       }
+    },
+    "requiredSecret": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "key": { "type": "string", "description": "Secret key name." },
+        "description": { "type": "string", "description": "Human-readable description." },
+        "type": { "type": "string", "enum": ["environment", "variable", "file"], "default": "environment" },
+        "target": { "type": "string", "description": "Projection target (defaults to key for env type)." }
+      },
+      "additionalProperties": false
     },
     "telemetryConfig": {
       "type": "object",

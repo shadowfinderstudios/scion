@@ -477,3 +477,477 @@ func TestDetectSettingsFormat_LegacyJSON(t *testing.T) {
 	assert.Equal(t, "", version)
 	assert.True(t, isLegacy)
 }
+
+// --- Comprehensive full-schema validation tests ---
+
+func TestValidateSettings_CompleteSchema(t *testing.T) {
+	// Exercises every section and field in the settings v1 schema.
+	data := []byte(`
+schema_version: "1"
+active_profile: local
+default_template: gemini
+default_harness_config: gemini
+
+server:
+  env: prod
+  log_level: info
+  log_format: json
+  hub:
+    port: 9810
+    host: "0.0.0.0"
+    public_url: "https://hub.example.com"
+    read_timeout: "30s"
+    write_timeout: "60s"
+    admin_emails:
+      - "admin@example.com"
+    soft_delete_retention: "72h"
+    soft_delete_retain_files: true
+    cors:
+      enabled: true
+      allowed_origins: ["https://app.example.com"]
+      allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+      allowed_headers: ["Authorization", "Content-Type"]
+      max_age: 3600
+  broker:
+    enabled: true
+    port: 9800
+    host: "0.0.0.0"
+    read_timeout: "30s"
+    write_timeout: "120s"
+    hub_endpoint: "https://hub.example.com"
+    broker_id: "broker-uuid-1234"
+    broker_name: "prod-broker-1"
+    broker_nickname: "Broker One"
+    broker_token: "secret-token"
+    auto_provide: true
+    cors:
+      enabled: true
+      allowed_origins: ["*"]
+  database:
+    driver: postgres
+    url: "postgres://localhost:5432/scion"
+  auth:
+    dev_mode: true
+    dev_token: "dev-secret-token"
+    dev_token_file: "/run/secrets/dev-token"
+    authorized_domains: ["example.com", "test.com"]
+  oauth:
+    web:
+      google:
+        client_id: "web-google-id"
+        client_secret: "web-google-secret"
+      github:
+        client_id: "web-github-id"
+        client_secret: "web-github-secret"
+    cli:
+      google:
+        client_id: "cli-google-id"
+        client_secret: "cli-google-secret"
+      github:
+        client_id: "cli-github-id"
+        client_secret: "cli-github-secret"
+    device:
+      google:
+        client_id: "device-google-id"
+        client_secret: "device-google-secret"
+      github:
+        client_id: "device-github-id"
+        client_secret: "device-github-secret"
+  storage:
+    provider: gcs
+    bucket: "scion-templates"
+    local_path: "/var/scion/storage"
+  secrets:
+    backend: gcpsm
+    gcp_project_id: "my-project"
+    gcp_credentials: "/path/to/creds.json"
+
+hub:
+  enabled: true
+  endpoint: "https://hub.example.com"
+  grove_id: "grove-abc-123"
+  local_only: false
+
+cli:
+  autohelp: true
+  interactive_disabled: false
+
+telemetry:
+  enabled: true
+  cloud:
+    enabled: true
+    endpoint: "https://otel.example.com:4317"
+    protocol: grpc
+    headers:
+      Authorization: "Bearer token123"
+    tls:
+      enabled: true
+      insecure_skip_verify: false
+    batch:
+      max_size: 512
+      timeout: "5s"
+  hub:
+    enabled: true
+    report_interval: "30s"
+  local:
+    enabled: true
+    file: "/var/log/scion-telemetry.jsonl"
+    console: true
+  filter:
+    enabled: true
+    respect_debug_mode: true
+    events:
+      include: ["agent.start", "agent.stop"]
+      exclude: ["agent.heartbeat"]
+    attributes:
+      redact: ["api_key", "token"]
+      hash: ["user_email"]
+    sampling:
+      default: 0.5
+      rates:
+        "agent.start": 1.0
+        "agent.heartbeat": 0.1
+  resource:
+    "service.name": "scion"
+    "deployment.environment": "production"
+
+runtimes:
+  docker:
+    type: docker
+    host: "unix:///var/run/docker.sock"
+    env:
+      DOCKER_TLS_VERIFY: "1"
+    sync: "mutagen"
+  container:
+    type: container
+  k8s-prod:
+    type: kubernetes
+    context: "gke_project_zone_cluster"
+    namespace: "scion-agents"
+    gke: true
+
+harness_configs:
+  gemini:
+    harness: gemini
+    image: "us-central1-docker.pkg.dev/project/scion-gemini:latest"
+    user: scion
+    model: "gemini-2.5-pro"
+    args: ["--sandbox=strict"]
+    env:
+      GEMINI_SAFETY: "maximum"
+    volumes:
+      - source: /host/config
+        target: /container/config
+        read_only: true
+        type: local
+    auth_selected_type: "vertex-ai"
+    secrets:
+      - key: GEMINI_API_KEY
+        description: "Gemini API key"
+        type: environment
+      - key: service_account
+        description: "Service account JSON"
+        type: file
+        target: /run/secrets/sa.json
+  claude:
+    harness: claude
+    image: "us-central1-docker.pkg.dev/project/scion-claude:latest"
+    user: scion
+  opencode:
+    harness: opencode
+    image: "example.com/opencode:latest"
+  codex:
+    harness: codex
+    image: "example.com/codex:latest"
+  custom-generic:
+    harness: generic
+    image: "example.com/custom:latest"
+    model: "custom-model"
+    args: ["--verbose"]
+
+profiles:
+  local:
+    runtime: container
+    default_template: gemini
+    default_harness_config: gemini
+    env:
+      ENV: local
+    volumes:
+      - source: /tmp/scion
+        target: /workspace/tmp
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+      disk: "10Gi"
+    harness_overrides:
+      gemini:
+        image: "custom:local"
+        user: dev
+        env:
+          EXTRA: "value"
+        volumes:
+          - source: /local/override
+            target: /container/override
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+        auth_selected_type: "gemini-api-key"
+    secrets:
+      - key: PROFILE_SECRET
+        description: "A profile-level secret"
+  remote:
+    runtime: k8s-prod
+    default_template: gemini
+`)
+	errors, err := ValidateSettings(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "complete settings schema example should produce no validation errors, got: %v", errors)
+}
+
+func TestValidateAgentConfig_CompleteSchema(t *testing.T) {
+	// Exercises every section and field in the agent v1 schema.
+	data := []byte(`
+schema_version: "1"
+harness_config: gemini
+harness: gemini
+image: "us-central1-docker.pkg.dev/project/scion-gemini:latest"
+user: scion
+model: "gemini-2.5-pro"
+args: ["--sandbox=strict"]
+detached: true
+config_dir: "/home/scion/.config"
+command_args: ["--verbose"]
+max_turns: 100
+max_duration: "4h"
+
+env:
+  GEMINI_SAFETY: "maximum"
+  WORKSPACE: "/workspace"
+
+volumes:
+  - source: /host/config
+    target: /container/config
+    read_only: true
+    type: local
+  - target: /data/gcs
+    type: gcs
+    bucket: "my-bucket"
+    prefix: "data/"
+    mode: "ro"
+
+resources:
+  requests:
+    cpu: "1"
+    memory: "1Gi"
+  limits:
+    cpu: "4"
+    memory: "8Gi"
+  disk: "20Gi"
+
+services:
+  - name: browser
+    command: ["chromium", "--headless", "--remote-debugging-port=9222"]
+    restart: on-failure
+    env:
+      DISPLAY: ":99"
+    ready_check:
+      type: tcp
+      target: "localhost:9222"
+      timeout: "10s"
+  - name: database
+    command: ["postgres", "-D", "/data"]
+    restart: always
+    ready_check:
+      type: http
+      target: "http://localhost:5432/health"
+      timeout: "30s"
+  - name: delay-service
+    command: ["sleep", "5"]
+    restart: "no"
+    ready_check:
+      type: delay
+      target: "3s"
+      timeout: "5s"
+
+gemini:
+  auth_selectedType: "vertex-ai"
+
+hub:
+  endpoint: "https://hub.example.com"
+
+telemetry:
+  enabled: true
+  cloud:
+    enabled: true
+    endpoint: "https://otel.example.com:4317"
+    protocol: grpc
+    headers:
+      Authorization: "Bearer token"
+    tls:
+      enabled: true
+      insecure_skip_verify: false
+    batch:
+      max_size: 256
+      timeout: "3s"
+  hub:
+    enabled: true
+    report_interval: "15s"
+  local:
+    enabled: true
+    file: "/var/log/agent-telemetry.jsonl"
+    console: false
+  filter:
+    enabled: true
+    respect_debug_mode: true
+    events:
+      include: ["tool.call", "llm.turn"]
+      exclude: ["agent.heartbeat"]
+    attributes:
+      redact: ["api_key"]
+      hash: ["user_id"]
+    sampling:
+      default: 1.0
+      rates:
+        "tool.call": 0.5
+  resource:
+    "agent.name": "test-agent"
+
+secrets:
+  - key: API_KEY
+    description: "Primary API key"
+    type: environment
+  - key: SERVICE_ACCOUNT
+    description: "Service account credentials"
+    type: file
+    target: /run/secrets/sa.json
+
+agent_instructions: "You are a helpful coding assistant."
+system_prompt: "Follow best practices and write clean code."
+default_harness_config: gemini
+
+kubernetes:
+  context: "gke_project_zone_cluster"
+  namespace: "scion-agents"
+  runtimeClassName: "gvisor"
+  serviceAccountName: "scion-agent-sa"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+`)
+	errors, err := ValidateAgentConfig(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "complete agent config schema example should produce no validation errors, got: %v", errors)
+}
+
+func TestValidateSettings_RuntimeWithGKE(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+runtimes:
+  k8s:
+    type: kubernetes
+    context: "gke_project_zone_cluster"
+    namespace: "default"
+    gke: true
+`)
+	errors, err := ValidateSettings(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "runtime with gke field should pass validation")
+}
+
+func TestValidateSettings_ServerHubSoftDelete(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+server:
+  hub:
+    port: 9810
+    soft_delete_retention: "72h"
+    soft_delete_retain_files: true
+`)
+	errors, err := ValidateSettings(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "server hub with soft_delete fields should pass validation")
+}
+
+func TestValidateAgentConfig_WithSecrets(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+harness_config: gemini
+secrets:
+  - key: API_KEY
+    description: "API key for the service"
+    type: environment
+  - key: CERT_FILE
+    type: file
+    target: /run/secrets/cert.pem
+`)
+	errors, err := ValidateAgentConfig(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "agent config with secrets should pass validation")
+}
+
+func TestValidateAgentConfig_WithHub(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+harness_config: gemini
+hub:
+  endpoint: "https://hub.example.com"
+`)
+	errors, err := ValidateAgentConfig(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "agent config with hub should pass validation")
+}
+
+func TestValidateAgentConfig_WithAgnosticFields(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+harness_config: gemini
+agent_instructions: "You are a coding assistant."
+system_prompt: "Write clean, tested code."
+default_harness_config: claude
+`)
+	errors, err := ValidateAgentConfig(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "agent config with agnostic template fields should pass validation")
+}
+
+func TestValidateAgentConfig_ServiceWithEnv(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+harness_config: gemini
+services:
+  - name: db
+    command: ["postgres"]
+    env:
+      PGDATA: "/var/lib/postgresql/data"
+      POSTGRES_PASSWORD: "test"
+`)
+	errors, err := ValidateAgentConfig(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "service with env should pass validation")
+}
+
+func TestValidateAgentConfig_ServiceWithDelayCheck(t *testing.T) {
+	data := []byte(`
+schema_version: "1"
+harness_config: gemini
+services:
+  - name: slow-start
+    command: ["./start.sh"]
+    ready_check:
+      type: delay
+      target: "5s"
+      timeout: "10s"
+`)
+	errors, err := ValidateAgentConfig(data, "1")
+	require.NoError(t, err)
+	assert.Empty(t, errors, "service with delay ready_check should pass validation")
+}
