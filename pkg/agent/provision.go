@@ -393,25 +393,56 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 	h := harness.New(finalScionCfg.Harness)
 	if len(chain) > 0 {
 		lastTpl := chain[len(chain)-1]
+
+		// Convention-based auto-detection: if agent_instructions is not set in
+		// the template config but an agents.md file exists in the template
+		// directory, use it automatically. This prevents a common oversight
+		// where a template author creates the file but forgets to reference it
+		// in scion-agent.yaml.
+		if finalScionCfg.AgentInstructions == "" {
+			conventionPath := filepath.Join(lastTpl.Path, "agents.md")
+			if _, err := os.Stat(conventionPath); err == nil {
+				util.Debugf("ProvisionAgent: agent_instructions not set in config, auto-detected agents.md in template %s", lastTpl.Path)
+				finalScionCfg.AgentInstructions = "agents.md"
+			}
+		}
+
 		if finalScionCfg.AgentInstructions != "" {
+			util.Debugf("ProvisionAgent: resolving agent_instructions=%q from template %s", finalScionCfg.AgentInstructions, lastTpl.Path)
 			content, err := lastTpl.ResolveContent(finalScionCfg.AgentInstructions)
 			if err != nil {
 				return "", "", nil, fmt.Errorf("failed to resolve agent_instructions: %w", err)
 			}
 			if content != nil {
+				util.Debugf("ProvisionAgent: injecting agent instructions (%d bytes) into %s", len(content), agentHome)
 				if err := h.InjectAgentInstructions(agentHome, content); err != nil {
 					return "", "", nil, fmt.Errorf("failed to inject agent instructions: %w", err)
 				}
+			} else {
+				util.Debugf("ProvisionAgent: agent_instructions resolved to nil, skipping injection")
 			}
+		} else {
+			util.Debugf("ProvisionAgent: no agent_instructions configured and no agents.md found in template")
 		}
 
 		// Step 4: Inject system prompt
+		// Convention-based auto-detection for system prompt as well.
+		if finalScionCfg.SystemPrompt == "" {
+			conventionPath := filepath.Join(lastTpl.Path, "system-prompt.md")
+			if _, err := os.Stat(conventionPath); err == nil {
+				util.Debugf("ProvisionAgent: system_prompt not set in config, auto-detected system-prompt.md in template %s", lastTpl.Path)
+				finalScionCfg.SystemPrompt = "system-prompt.md"
+			}
+		}
+
 		if finalScionCfg.SystemPrompt != "" {
+			util.Debugf("ProvisionAgent: resolving system_prompt=%q from template %s", finalScionCfg.SystemPrompt, lastTpl.Path)
 			content, err := lastTpl.ResolveContent(finalScionCfg.SystemPrompt)
 			if err != nil {
 				return "", "", nil, fmt.Errorf("failed to resolve system_prompt: %w", err)
 			}
 			if content != nil {
+				util.Debugf("ProvisionAgent: injecting system prompt (%d bytes) into %s", len(content), agentHome)
 				if err := h.InjectSystemPrompt(agentHome, content); err != nil {
 					return "", "", nil, fmt.Errorf("failed to inject system prompt: %w", err)
 				}

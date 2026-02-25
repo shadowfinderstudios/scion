@@ -377,6 +377,110 @@ func TestComposition_HarnessConfigPersistedInAgentInfo(t *testing.T) {
 	_ = tmpDir
 }
 
+// setupInlineHarnessTemplate creates a template with an inline harness-config
+// that provides home/.claude/claude.md (lowercase) and a template-level agents.md.
+// If agentInstructions is empty, agent_instructions is omitted from the config.
+func setupInlineHarnessTemplate(t *testing.T, scionDir, tplName, agentInstructions string) string {
+	t.Helper()
+	tplDir := filepath.Join(scionDir, "templates", tplName)
+	os.MkdirAll(tplDir, 0755)
+
+	// Template-level agents.md (the instruction file that should win)
+	os.WriteFile(filepath.Join(tplDir, "agents.md"), []byte("# Template Agent Instructions\nThese are from the template."), 0644)
+	os.WriteFile(filepath.Join(tplDir, "system-prompt.md"), []byte("Be helpful."), 0644)
+
+	// Template scion-agent.yaml
+	tplConfig := "default_harness_config: claude-web\n"
+	if agentInstructions != "" {
+		tplConfig += "agent_instructions: " + agentInstructions + "\n"
+	}
+	tplConfig += "system_prompt: system-prompt.md\n"
+	os.WriteFile(filepath.Join(tplDir, "scion-agent.yaml"), []byte(tplConfig), 0644)
+
+	// Inline harness-config: harness-configs/claude-web/
+	hcDir := filepath.Join(tplDir, "harness-configs", "claude-web")
+	hcHome := filepath.Join(hcDir, "home")
+	os.MkdirAll(filepath.Join(hcHome, ".claude", "skills", "chrome-devtools"), 0755)
+	os.WriteFile(filepath.Join(hcDir, "config.yaml"), []byte("harness: claude\nimage: test-claude:latest\n"), 0644)
+
+	// Harness config provides claude.md (lowercase) — this should be REPLACED
+	os.WriteFile(filepath.Join(hcHome, ".claude", "claude.md"), []byte("# Harness Config Instructions\nThese are from the harness config."), 0644)
+	os.WriteFile(filepath.Join(hcHome, ".claude", "settings.json"), []byte(`{"theme": "dark"}`), 0644)
+	os.WriteFile(filepath.Join(hcHome, ".claude", "skills", "chrome-devtools", "SKILL.md"), []byte("# Chrome DevTools"), 0644)
+	os.WriteFile(filepath.Join(hcHome, ".claude.json"), []byte(`{"projects": {}}`), 0644)
+	os.WriteFile(filepath.Join(hcHome, ".bashrc"), []byte("# bashrc"), 0644)
+	os.WriteFile(filepath.Join(hcHome, ".tmux.conf"), []byte("# tmux"), 0644)
+
+	return tplDir
+}
+
+// assertClaudeInstructions checks that the agent home has CLAUDE.md with template
+// instructions and that the lowercase harness-config claude.md has been replaced.
+func assertClaudeInstructions(t *testing.T, agentHome string) {
+	t.Helper()
+	claudeDir := filepath.Join(agentHome, ".claude")
+
+	// The canonical CLAUDE.md should exist with template instructions
+	canonicalPath := filepath.Join(claudeDir, "CLAUDE.md")
+	data, err := os.ReadFile(canonicalPath)
+	if err != nil {
+		t.Fatalf("expected CLAUDE.md at %s: %v", canonicalPath, err)
+	}
+	if !strings.Contains(string(data), "Template Agent Instructions") {
+		t.Errorf("CLAUDE.md should contain template instructions, got %q", string(data))
+	}
+	if strings.Contains(string(data), "Harness Config Instructions") {
+		t.Errorf("CLAUDE.md should NOT contain harness config instructions, got %q", string(data))
+	}
+
+	// Lowercase claude.md should NOT exist (on case-sensitive FS)
+	entries, _ := os.ReadDir(claudeDir)
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), "CLAUDE.md") && e.Name() != "CLAUDE.md" {
+			t.Errorf("stale lowercase %q should have been removed from %s", e.Name(), claudeDir)
+		}
+	}
+
+	// Other harness config files should still be present
+	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); os.IsNotExist(err) {
+		t.Error("expected settings.json to still exist from harness config")
+	}
+	if _, err := os.Stat(filepath.Join(claudeDir, "skills", "chrome-devtools", "SKILL.md")); os.IsNotExist(err) {
+		t.Error("expected SKILL.md to still exist from harness config")
+	}
+}
+
+func TestComposition_InlineHarnessConfigWithAgentInstructions(t *testing.T) {
+	// Template explicitly sets agent_instructions: agents.md in scion-agent.yaml.
+	// Inline harness-config provides home/.claude/claude.md (lowercase).
+	// Expected: .claude/CLAUDE.md should contain the template's agents.md content.
+	_, globalScionDir, projectScionDir := setupCompositionTest(t)
+	setupInlineHarnessTemplate(t, globalScionDir, "web-dev-explicit", "agents.md")
+
+	agentHome, _, _, err := ProvisionAgent(context.Background(), "explicit-instruct", "web-dev-explicit", "", "", projectScionDir, "", "", "", "")
+	if err != nil {
+		t.Fatalf("ProvisionAgent failed: %v", err)
+	}
+
+	assertClaudeInstructions(t, agentHome)
+}
+
+func TestComposition_InlineHarnessConfigAutoDetectsAgentsMd(t *testing.T) {
+	// Template has agents.md but does NOT set agent_instructions in config.
+	// Inline harness-config provides home/.claude/claude.md (lowercase).
+	// Expected: auto-detection should find agents.md and inject it,
+	// replacing the harness-config's claude.md.
+	_, globalScionDir, projectScionDir := setupCompositionTest(t)
+	setupInlineHarnessTemplate(t, globalScionDir, "web-dev-auto", "") // no agent_instructions
+
+	agentHome, _, _, err := ProvisionAgent(context.Background(), "auto-instruct", "web-dev-auto", "", "", projectScionDir, "", "", "", "")
+	if err != nil {
+		t.Fatalf("ProvisionAgent failed: %v", err)
+	}
+
+	assertClaudeInstructions(t, agentHome)
+}
+
 func TestComposition_FullInitProjectFlow(t *testing.T) {
 	// End-to-end test: InitProject + default template + harness-config resolution
 	tmpDir := t.TempDir()
