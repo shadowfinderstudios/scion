@@ -14,6 +14,12 @@
 # limitations under the License.
 
 # hack/gce-start-hub.sh - Build and start Scion Hub on GCE with Caddy Reverse Proxy
+#
+# Usage: hack/gce-start-hub.sh [--full] [--reset-db]
+#
+#   Default (fast): push → pull → build → restart → health check
+#   --full:         Also uploads config files, installs Caddy, updates systemd/Caddy
+#   --reset-db:     Deletes the hub database before starting (works in both modes)
 
 set -euo pipefail
 
@@ -24,19 +30,62 @@ DOMAIN="hub.demo.scion-ai.dev"
 REPO_DIR="/home/scion/scion-agent"
 SCION_BIN="/usr/local/bin/scion"
 RESET_DB=false
+FULL_DEPLOY=false
 
-git push origin main
+# --- Timing & Reporting Helpers ---
 
-# Parse arguments
+STEP_NUM=0
+TOTAL_STEPS=0
+STEP_START=0
+declare -a STEP_NAMES=()
+declare -a STEP_TIMES=()
+
+step() {
+    local now=$SECONDS
+    # Record elapsed time for the previous step
+    if (( STEP_NUM > 0 )); then
+        STEP_TIMES+=( $(( now - STEP_START )) )
+    fi
+    STEP_NUM=$(( STEP_NUM + 1 ))
+    STEP_START=$now
+    STEP_NAMES+=( "$1" )
+    echo ""
+    echo "==> [${STEP_NUM}/${TOTAL_STEPS}] $1"
+}
+
+substep() {
+    echo "  -> $1"
+}
+
+print_summary() {
+    local now=$SECONDS
+    # Capture final step time
+    if (( STEP_NUM > 0 )); then
+        STEP_TIMES+=( $(( now - STEP_START )) )
+    fi
+    local total=$SECONDS
+    echo ""
+    echo "=== Deploy completed in ${total}s ==="
+    for i in "${!STEP_NAMES[@]}"; do
+        printf "  %-34s %3ss\n" "${STEP_NAMES[$i]}" "${STEP_TIMES[$i]}"
+    done
+}
+
+# --- Argument Parsing ---
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --reset-db)
             RESET_DB=true
             shift
             ;;
+        --full)
+            FULL_DEPLOY=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--reset-db]"
+            echo "Usage: $0 [--full] [--reset-db]"
             exit 1
             ;;
     esac
@@ -47,19 +96,39 @@ if [[ -z "$PROJECT_ID" ]]; then
     exit 1
 fi
 
-echo "=== Managing Scion Hub on ${INSTANCE_NAME} ==="
-
-# Upload hub.env if it exists
-if [ -f ".scratch/hub.env" ]; then
-    echo "Uploading hub.env..."
-    gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command "sudo mkdir -p /home/scion/.scion && sudo chown scion:scion /home/scion/.scion"
-    gcloud compute scp ".scratch/hub.env" "${INSTANCE_NAME}:/tmp/hub.env" --zone="${ZONE}"
-    gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command "sudo mv /tmp/hub.env /home/scion/.scion/hub.env && sudo chown scion:scion /home/scion/.scion/hub.env && sudo chmod 600 /home/scion/.scion/hub.env"
+# Compute total steps based on mode
+if $FULL_DEPLOY; then
+    TOTAL_STEPS=4  # push, upload, remote-session, remote-health
+    echo "=== Full Deploy: Scion Hub on ${INSTANCE_NAME} ==="
+else
+    TOTAL_STEPS=3  # push, remote-session, remote-health
+    echo "=== Fast Deploy: Scion Hub on ${INSTANCE_NAME} ==="
 fi
 
-# Deploy settings.yaml for agent-side telemetry (only if it doesn't already exist)
-TMP_SETTINGS=$(mktemp)
-cat <<'SETTINGS_EOF' > "$TMP_SETTINGS"
+# --- Step: Push ---
+
+step "Pushing to origin..."
+git push origin main
+
+# --- Step: Upload config files (full mode only) ---
+
+if $FULL_DEPLOY; then
+    step "Uploading config files..."
+
+    # Prepare all temp files locally
+    UPLOAD_DIR=$(mktemp -d)
+    trap "rm -rf $UPLOAD_DIR" EXIT
+
+    # hub.env
+    HAS_HUB_ENV=false
+    if [ -f ".scratch/hub.env" ]; then
+        cp ".scratch/hub.env" "$UPLOAD_DIR/hub.env"
+        HAS_HUB_ENV=true
+        substep "Prepared hub.env"
+    fi
+
+    # settings.yaml
+    cat <<'SETTINGS_EOF' > "$UPLOAD_DIR/scion-settings.yaml"
 schema_version: "1"
 hub:
   endpoint: "https://hub.demo.scion-ai.dev"
@@ -87,24 +156,10 @@ telemetry:
       hash:
         - "session_id"
 SETTINGS_EOF
+    substep "Prepared settings.yaml"
 
-gcloud compute scp "$TMP_SETTINGS" "${INSTANCE_NAME}:/tmp/scion-settings.yaml" --zone="${ZONE}"
-rm "$TMP_SETTINGS"
-
-# Only install settings.yaml if one doesn't already exist (avoid clobbering manual edits)
-gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command \
-    'if [ ! -f /home/scion/.scion/settings.yaml ]; then
-        sudo mv /tmp/scion-settings.yaml /home/scion/.scion/settings.yaml
-        sudo chown scion:scion /home/scion/.scion/settings.yaml
-        echo "Deployed settings.yaml for agent telemetry."
-    else
-        echo "settings.yaml already exists, skipping (remove to re-deploy)."
-        rm -f /tmp/scion-settings.yaml
-    fi'
-
-# We use a temp file locally to avoid escaping hell on gcloud compute ssh
-TMP_SERVICE=$(mktemp)
-printf "[Unit]
+    # systemd service file
+    printf "[Unit]
 Description=Scion Hub API Server
 After=network.target
 
@@ -124,110 +179,170 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-" "${REPO_DIR}" "${SCION_BIN}" > "$TMP_SERVICE"
+" "${REPO_DIR}" "${SCION_BIN}" > "$UPLOAD_DIR/scion-hub.service"
+    substep "Prepared systemd unit file"
 
-gcloud compute scp "$TMP_SERVICE" "${INSTANCE_NAME}:/tmp/scion-hub.service" --zone="${ZONE}"
-rm "$TMP_SERVICE"
-
-# Caddyfile
-TMP_CADDY=$(mktemp)
-cat <<EOF > "$TMP_CADDY"
+    # Caddyfile
+    cat <<EOF > "$UPLOAD_DIR/Caddyfile"
 hub.demo.scion-ai.dev {
     # In combined mode, Hub API and Web UI are served on a single port
     reverse_proxy localhost:8080
     tls /etc/letsencrypt/live/demo.scion-ai.dev/fullchain.pem /etc/letsencrypt/live/demo.scion-ai.dev/privkey.pem
 }
 EOF
-gcloud compute scp "$TMP_CADDY" "${INSTANCE_NAME}:/tmp/Caddyfile" --zone="${ZONE}"
-rm "$TMP_CADDY"
+    substep "Prepared Caddyfile"
 
-gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command '
-    set -euo pipefail
-    RESET_DB='"${RESET_DB}"'
+    # Single SCP to upload all files, then single SSH to place them
+    substep "Uploading files to instance..."
+    gcloud compute scp "$UPLOAD_DIR"/* "${INSTANCE_NAME}:/tmp/" --zone="${ZONE}"
 
-    # Install Caddy
+    # Prepare directories and move hub.env into place via a single SSH call
+    PLACE_HUB_ENV=""
+    if $HAS_HUB_ENV; then
+        PLACE_HUB_ENV='
+        sudo mv /tmp/hub.env /home/scion/.scion/hub.env
+        sudo chown scion:scion /home/scion/.scion/hub.env
+        sudo chmod 600 /home/scion/.scion/hub.env
+        echo "  -> Installed hub.env"'
+    fi
+
+    gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command "
+        set -euo pipefail
+        sudo mkdir -p /home/scion/.scion
+        sudo chown scion:scion /home/scion/.scion
+        ${PLACE_HUB_ENV}
+        if [ ! -f /home/scion/.scion/settings.yaml ]; then
+            sudo mv /tmp/scion-settings.yaml /home/scion/.scion/settings.yaml
+            sudo chown scion:scion /home/scion/.scion/settings.yaml
+            echo '  -> Installed settings.yaml'
+        else
+            echo '  -> settings.yaml already exists, skipping'
+            rm -f /tmp/scion-settings.yaml
+        fi
+    "
+    substep "Config files placed on instance"
+fi
+
+# --- Remote: Pull, Build, Restart, Health Check (single SSH session) ---
+
+# Build the conditional full-deploy remote commands
+FULL_REMOTE_COMMANDS=""
+if $FULL_DEPLOY; then
+    FULL_REMOTE_COMMANDS='
+    # Install Caddy if missing
     if ! command -v caddy &>/dev/null; then
-        echo "Installing Caddy..."
+        echo "  -> Installing Caddy..."
         sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
         curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" | sudo tee /etc/apt/sources.list.d/caddy-stable.list
         sudo apt-get update
         sudo apt-get install -y caddy
     fi
+'
+fi
 
-    # 1. Update code as scion user
-    echo "Updating repository..."
-    sudo -u scion sh -c "cd /home/scion/scion-agent && git pull"
-
-    # 2. Build web assets and binary as scion user
-    echo "Building web assets..."
-    sudo -u scion sh -c "cd /home/scion/scion-agent && make web"
-
-    echo "Building scion binary..."
-    sudo -u scion sh -c "cd /home/scion/scion-agent && /usr/local/go/bin/go build -o scion ./cmd/scion"
-    
-    # 3. Stop existing service if running
-    if systemctl is-active --quiet scion-hub; then
-        echo "Stopping existing scion-hub service..."
-        sudo systemctl stop scion-hub
-    fi
-
-    # 3b. Reset database if requested
-    if [ "$RESET_DB" = "true" ]; then
-        echo "Resetting hub database..."
-        sudo rm -f /home/scion/.scion/hub.db
-        echo "Database deleted."
-    fi
-
-    # 4. Install binary to /usr/local/bin
-    sudo mv /home/scion/scion-agent/scion /usr/local/bin/scion
-    sudo chmod +x /usr/local/bin/scion
-
-    # 5. Move systemd unit file and reload if changed
-    echo "Updating systemd unit file..."
+FULL_POST_INSTALL_COMMANDS=""
+if $FULL_DEPLOY; then
+    FULL_POST_INSTALL_COMMANDS='
+    # Update systemd unit file if changed
+    echo ""
+    echo "==> Installing infrastructure config..."
     if ! diff -q /tmp/scion-hub.service /etc/systemd/system/scion-hub.service >/dev/null 2>&1; then
         sudo mv /tmp/scion-hub.service /etc/systemd/system/scion-hub.service
-        echo "Reloading systemd daemon..."
+        echo "  -> Systemd unit file updated, reloading daemon..."
         sudo systemctl daemon-reload
     else
-        echo "Systemd unit file unchanged."
+        echo "  -> Systemd unit file unchanged"
     fi
 
-    echo "Debug: Service file content:"
-    sudo systemctl cat scion-hub || true
-
-    # 6. Fix Certificate Permissions for Caddy
-    echo "Fixing certificate permissions for Caddy..."
+    # Fix certificate permissions for Caddy
+    echo "  -> Fixing certificate permissions..."
     sudo chown -R root:caddy /etc/letsencrypt/live
     sudo chown -R root:caddy /etc/letsencrypt/archive
     sudo chmod -R g+rX /etc/letsencrypt/live
     sudo chmod -R g+rX /etc/letsencrypt/archive
 
-    # 7. Configure Caddy
-    echo "Updating Caddyfile..."
+    # Update Caddyfile if changed
     if ! diff -q /tmp/Caddyfile /etc/caddy/Caddyfile >/dev/null 2>&1; then
         sudo mv /tmp/Caddyfile /etc/caddy/Caddyfile
         sudo chown caddy:caddy /etc/caddy/Caddyfile
         sudo chmod 644 /etc/caddy/Caddyfile
-        echo "Restarting Caddy..."
+        echo "  -> Caddyfile updated, restarting Caddy..."
         sudo systemctl restart caddy
     else
-        echo "Caddyfile unchanged."
+        echo "  -> Caddyfile unchanged"
+    fi
+'
+fi
+
+step "Remote: pull, build, restart..."
+
+gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command '
+    set -euo pipefail
+    RESET_DB='"${RESET_DB}"'
+    FULL_DEPLOY='"${FULL_DEPLOY}"'
+    REMOTE_START=$SECONDS
+
+    '"${FULL_REMOTE_COMMANDS}"'
+
+    # Pull
+    echo ""
+    echo "==> Pulling latest code..."
+    PULL_START=$SECONDS
+    sudo -u scion sh -c "cd /home/scion/scion-agent && git pull"
+    echo "  -> Pull took $(( SECONDS - PULL_START ))s"
+
+    # Build web assets
+    echo ""
+    echo "==> Building web assets..."
+    WEB_START=$SECONDS
+    sudo -u scion sh -c "cd /home/scion/scion-agent && make web"
+    echo "  -> Web build took $(( SECONDS - WEB_START ))s"
+
+    # Build binary
+    echo ""
+    echo "==> Building scion binary..."
+    BUILD_START=$SECONDS
+    sudo -u scion sh -c "cd /home/scion/scion-agent && /usr/local/go/bin/go build -o scion ./cmd/scion"
+    echo "  -> Binary build took $(( SECONDS - BUILD_START ))s"
+
+    # Stop existing service
+    echo ""
+    echo "==> Stopping service..."
+    if systemctl is-active --quiet scion-hub; then
+        sudo systemctl stop scion-hub
+        echo "  -> Service stopped"
+    else
+        echo "  -> Service was not running"
     fi
 
-    # 8. Start the scion-hub service
-    echo "Starting scion-hub service..."
+    # Reset database if requested
+    if [ "$RESET_DB" = "true" ]; then
+        echo "  -> Resetting hub database..."
+        sudo rm -f /home/scion/.scion/hub.db
+        echo "  -> Database deleted"
+    fi
+
+    # Install binary
+    echo "  -> Installing binary..."
+    sudo mv /home/scion/scion-agent/scion /usr/local/bin/scion
+    sudo chmod +x /usr/local/bin/scion
+
+    '"${FULL_POST_INSTALL_COMMANDS}"'
+
+    # Start service
+    echo ""
+    echo "==> Starting scion-hub service..."
     sudo systemctl enable scion-hub
     sudo systemctl start scion-hub
 
-    # 9. Wait for service to be active
-    echo "Waiting for service to start..."
+    # Wait for service to be active
     for i in {1..10}; do
         if systemctl is-active --quiet scion-hub; then
-            echo "Service is active."
+            echo "  -> Service is active"
             break
         fi
-        echo "Still waiting for service... ${i}"
+        echo "  -> Waiting for service... (${i}/10)"
         sleep 2
     done
 
@@ -237,36 +352,40 @@ gcloud compute ssh "${INSTANCE_NAME}" --zone="${ZONE}" --command '
         exit 1
     fi
 
-    # 10. Local Health Check
-    echo "Checking health locally on port 8080..."
+    # Local health check
+    echo ""
+    echo "==> Local health check..."
     for i in {1..10}; do
         HEALTH_RESP=$(curl -s http://localhost:8080/healthz || true)
         if echo "$HEALTH_RESP" | grep -q "\"status\":\"healthy\""; then
-            echo "Local health check passed: $HEALTH_RESP"
+            echo "  -> Local health check passed: $HEALTH_RESP"
             break
         fi
-        echo "Waiting for local health check... ${i}"
-        echo "Response was: $HEALTH_RESP"
+        echo "  -> Waiting for health check... (${i}/10)"
         sleep 2
         if [ "$i" -eq 10 ]; then
              echo "Error: Local health check failed."
              exit 1
         fi
     done
+
+    echo ""
+    echo "  -> Remote session took $(( SECONDS - REMOTE_START ))s"
 '
 
-# 11. Remote Health check
-echo "=== Performing Remote Health Check ==="
-echo "Waiting for hub to be ready at https://${DOMAIN}/healthz..."
+# --- Step: Remote Health Check ---
+
+step "Remote health check..."
+echo "  -> Checking https://${DOMAIN}/healthz..."
 for i in {1..12}; do
-    # Using -k because DNS might not be fully propagated or cert might be new
     if curl -s -k "https://${DOMAIN}/healthz" | grep -q '"status":"healthy"'; then
-        echo "Hub is healthy!"
+        echo "  -> Hub is healthy!"
         curl -s -k "https://${DOMAIN}/healthz"
         echo ""
+        print_summary
         exit 0
     fi
-    echo "Still waiting... ($i/12)"
+    echo "  -> Still waiting... ($i/12)"
     sleep 5
 done
 
