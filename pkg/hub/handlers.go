@@ -428,11 +428,9 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Create agent
 
-	// Resolve harness: prefer template metadata, then explicit request field, then template name
-	harness := s.getHarnessFromTemplate(resolvedTemplate, req.Template)
-	if harness == "" && req.Harness != "" {
-		harness = req.Harness
-	}
+	// Resolve harness: prefer template metadata (harness field, then slug), then explicit request field.
+	// Do NOT use req.Template as fallback since it may contain a UUID.
+	harness := s.getHarnessFromTemplate(resolvedTemplate, req.Harness)
 
 	agent := &store.Agent{
 		ID:              api.NewUUID(),
@@ -2494,11 +2492,9 @@ func (s *Server) createGroveAgent(w http.ResponseWriter, r *http.Request, groveI
 
 	// Create agent
 
-	// Resolve harness: prefer template metadata, then explicit request field, then template name
-	harness := s.getHarnessFromTemplate(resolvedTemplate, req.Template)
-	if harness == "" && req.Harness != "" {
-		harness = req.Harness
-	}
+	// Resolve harness: prefer template metadata (harness field, then slug), then explicit request field.
+	// Do NOT use req.Template as fallback since it may contain a UUID.
+	harness := s.getHarnessFromTemplate(resolvedTemplate, req.Harness)
 
 	agent := &store.Agent{
 		ID:              api.NewUUID(),
@@ -5641,8 +5637,13 @@ func (s *Server) resolveTemplate(ctx context.Context, templateRef, groveID strin
 // getHarnessFromTemplate returns the harness type from a resolved template,
 // or the fallback value if no template was resolved.
 func (s *Server) getHarnessFromTemplate(template *store.Template, fallback string) string {
-	if template != nil && template.Harness != "" {
-		return template.Harness
+	if template != nil {
+		if template.Harness != "" {
+			return template.Harness
+		}
+		if template.Slug != "" {
+			return template.Slug
+		}
 	}
 	return fallback
 }

@@ -975,6 +975,7 @@ func runBrokerProvide(cmd *cobra.Command, args []string) error {
 	// Resolve grove ID
 	var groveID string
 	var groveName string
+	var localGrovePath string // Local path to the grove's .scion directory on this broker
 
 	if brokerGroveID != "" {
 		groveID = brokerGroveID
@@ -985,6 +986,7 @@ func runBrokerProvide(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to resolve grove path: %w\n\nSpecify a grove with --grove <name-or-id>", err)
 		}
+		localGrovePath = resolvedPath
 
 		settings, err := config.LoadSettings(resolvedPath)
 		if err != nil {
@@ -1017,10 +1019,19 @@ func runBrokerProvide(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		// Try to resolve local grove path when using --hub flag with --grove
+		if localGrovePath == "" {
+			if rp, _, err := config.ResolveGrovePath(grovePath); err == nil {
+				localGrovePath = rp
+			}
+		}
 	} else {
 		resolvedPath, _, err := config.ResolveGrovePath(grovePath)
 		if err != nil {
 			return fmt.Errorf("failed to resolve grove path: %w", err)
+		}
+		if localGrovePath == "" {
+			localGrovePath = resolvedPath
 		}
 
 		settings, err := config.LoadSettings(resolvedPath)
@@ -1070,6 +1081,7 @@ func runBrokerProvide(cmd *cobra.Command, args []string) error {
 		ID:       groveID,
 		Name:     groveName,
 		BrokerID: brokerID,
+		Path:     localGrovePath,
 	}
 
 	resp, err := client.Groves().Register(ctx, req)

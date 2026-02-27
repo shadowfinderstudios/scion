@@ -1864,6 +1864,47 @@ func TestCreateAgent_HarnessFieldIgnoredWhenTemplateResolved(t *testing.T) {
 		"template-resolved harness should take precedence over request Harness field")
 }
 
+// TestCreateAgent_HarnessNotTemplateUUID verifies that when the template is
+// specified as a UUID that doesn't resolve on the hub (e.g., broker has it
+// locally), the harness is taken from the explicit Harness field, not from
+// the UUID string in Template.
+func TestCreateAgent_HarnessNotTemplateUUID(t *testing.T) {
+	disp := &createAgentDispatcher{createStatus: store.AgentStatusRunning}
+	srv, s, grove := setupCreateAgentServer(t, disp)
+	ctx := context.Background()
+
+	// Update the existing provider to have a LocalPath so the hub allows
+	// the template to be resolved locally by the broker.
+	require.NoError(t, s.AddGroveProvider(ctx, &store.GroveProvider{
+		GroveID:    grove.ID,
+		BrokerID:   "broker-create",
+		BrokerName: "Create Test Broker",
+		LocalPath:  "/some/local/path",
+		Status:     "online",
+	}))
+
+	// Create agent with template UUID that doesn't exist on hub + explicit harness
+	templateUUID := "003879ad-f000-426d-b52f-08f537c4c6ce"
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/agents", CreateAgentRequest{
+		Name:     "uuid-tmpl-agent",
+		GroveID:  grove.ID,
+		Template: templateUUID,
+		Harness:  "gemini",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp CreateAgentResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	agent, err := s.GetAgent(ctx, resp.Agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, agent.AppliedConfig)
+	assert.Equal(t, "gemini", agent.AppliedConfig.Harness,
+		"AppliedConfig.Harness should be the harness name, not the template UUID")
+	assert.NotEqual(t, templateUUID, agent.AppliedConfig.Harness,
+		"AppliedConfig.Harness must not contain the template UUID")
+}
+
 // ---------------------------------------------------------------------------
 // Grove-scoped existing-agent tests (mirror createAgent tests)
 // ---------------------------------------------------------------------------
