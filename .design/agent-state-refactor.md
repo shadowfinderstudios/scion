@@ -518,13 +518,13 @@ This replaces the previously discussed but unimplemented "stale/stalled detectio
 3. ~~Add validation functions (`Phase.IsValid()`, `Activity.IsValid()`, `Activity.IsSticky()`)~~
 4. ~~Add tests for the state model~~
 
-### Phase 2: Refactor Sciontool (Container-Side)
+### Phase 2: Refactor Sciontool (Container-Side) ✅
 
-1. Update `pkg/sciontool/hooks/types.go` to import and use `pkg/agent/state` types
-2. Refactor `StatusHandler` to write `phase` + `activity` to `agent-info.json`
-3. Refactor `HubHandler` to send structured `phase`/`activity` updates
-4. Update `pkg/sciontool/hub/client.go` to use canonical types
-5. Remove the duplicate `AgentState` and `AgentStatus` type definitions
+1. ~~Update `pkg/sciontool/hooks/types.go` to import and use `pkg/agent/state` types~~
+2. ~~Refactor `StatusHandler` to write `phase` + `activity` to `agent-info.json`~~
+3. ~~Refactor `HubHandler` to send structured `phase`/`activity` updates~~
+4. ~~Update `pkg/sciontool/hub/client.go` to use canonical types~~
+5. ~~Remove the duplicate `AgentState` and `AgentStatus` type definitions~~
 
 ### Phase 3: Refactor Hub and Store
 

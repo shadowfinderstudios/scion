@@ -26,6 +26,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 )
 
 const (
@@ -55,34 +57,20 @@ const (
 	DefaultRetryMaxDelay = 5 * time.Second
 )
 
-// AgentStatus represents the status of an agent.
-type AgentStatus string
-
-const (
-	StatusPending      AgentStatus = "pending"
-	StatusProvisioning AgentStatus = "provisioning"
-	StatusStarting     AgentStatus = "starting"
-	StatusRunning      AgentStatus = "running"
-	StatusBusy         AgentStatus = "busy"
-	StatusIdle         AgentStatus = "idle"
-	StatusStopping     AgentStatus = "stopping"
-	StatusStopped      AgentStatus = "stopped"
-	StatusError        AgentStatus = "error"
-	StatusShuttingDown     AgentStatus = "shutting_down"
-	StatusCloning          AgentStatus = "cloning"
-	StatusWaitingForInput  AgentStatus = "waiting_for_input"
-	StatusCompleted        AgentStatus = "completed"
-	StatusLimitsExceeded   AgentStatus = "limits_exceeded"
-)
-
 // StatusUpdate represents a status update request.
 // Fields:
-// - Status: Agent status (running, stopped, error, busy, idle, waiting_for_input, completed).
+// - Phase: Infrastructure lifecycle phase (canonical).
+// - Activity: What the agent is doing (canonical).
+// - ToolName: Tool name when activity is executing.
+// - Status: Backward-compatible flat status string (computed via DisplayStatus).
 // - Message: Optional message associated with the status.
 // - TaskSummary: Current task description.
 // - Heartbeat: If true, only updates last_seen without changing status.
 type StatusUpdate struct {
-	Status      AgentStatus       `json:"status,omitempty"`
+	Phase       state.Phase       `json:"phase,omitempty"`
+	Activity    state.Activity    `json:"activity,omitempty"`
+	ToolName    string            `json:"toolName,omitempty"`
+	Status      string            `json:"status,omitempty"`
 	Message     string            `json:"message,omitempty"`
 	TaskSummary string            `json:"taskSummary,omitempty"`
 	Heartbeat   bool              `json:"heartbeat,omitempty"`
@@ -250,76 +238,15 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	})
 }
 
-// ReportRunning reports that the agent is running.
-func (c *Client) ReportRunning(ctx context.Context, message string) error {
+// ReportState sends a structured phase/activity update to the Hub.
+// The backward-compatible Status field is computed automatically via DisplayStatus().
+func (c *Client) ReportState(ctx context.Context, phase state.Phase, activity state.Activity, message string) error {
+	s := state.AgentState{Phase: phase, Activity: activity}
 	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusRunning,
-		Message: message,
-	})
-}
-
-// ReportCloning reports that the agent is cloning a git repository.
-func (c *Client) ReportCloning(ctx context.Context, message string, metadata map[string]string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:   StatusCloning,
+		Phase:    phase,
+		Activity: activity,
+		Status:   s.DisplayStatus(),
 		Message:  message,
-		Metadata: metadata,
-	})
-}
-
-// ReportBusy reports that the agent is busy with a task.
-func (c *Client) ReportBusy(ctx context.Context, message string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusBusy,
-		Message: message,
-	})
-}
-
-// ReportIdle reports that the agent is idle.
-func (c *Client) ReportIdle(ctx context.Context, message string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusIdle,
-		Message: message,
-	})
-}
-
-// ReportError reports an error status.
-func (c *Client) ReportError(ctx context.Context, message string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusError,
-		Message: message,
-	})
-}
-
-// ReportShuttingDown reports that the agent is shutting down.
-func (c *Client) ReportShuttingDown(ctx context.Context, message string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusShuttingDown,
-		Message: message,
-	})
-}
-
-// ReportStopped reports that the agent has stopped.
-func (c *Client) ReportStopped(ctx context.Context, message string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusStopped,
-		Message: message,
-	})
-}
-
-// ReportLimitsExceeded reports that the agent has exceeded its configured limits.
-func (c *Client) ReportLimitsExceeded(ctx context.Context, message string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:  StatusLimitsExceeded,
-		Message: message,
-	})
-}
-
-// ReportTaskCompleted reports that a task has been completed.
-func (c *Client) ReportTaskCompleted(ctx context.Context, taskSummary string) error {
-	return c.UpdateStatus(ctx, StatusUpdate{
-		Status:      StatusCompleted,
-		TaskSummary: taskSummary,
 	})
 }
 

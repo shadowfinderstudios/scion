@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks/handlers"
 	"github.com/ptone/scion-agent/pkg/sciontool/hub"
 	"github.com/ptone/scion-agent/pkg/sciontool/log"
@@ -79,14 +79,14 @@ func runStatusAskUser(message string) {
 	statusHandler := handlers.NewStatusHandler()
 	loggingHandler := handlers.NewLoggingHandler()
 
-	// Update status to waiting for input (sticky)
-	if err := statusHandler.UpdateStatus(hooks.StateWaitingForInput); err != nil {
+	// Update activity to waiting_for_input (sticky)
+	if err := statusHandler.UpdateActivity(state.ActivityWaitingForInput, ""); err != nil {
 		log.Error("Failed to update status: %v", err)
 	}
 
 	// Log the event
 	logMessage := fmt.Sprintf("Agent requested input: %s", message)
-	if err := loggingHandler.LogEvent(hooks.StateWaitingForInput, logMessage); err != nil {
+	if err := loggingHandler.LogEvent(string(state.ActivityWaitingForInput), logMessage); err != nil {
 		log.Error("Failed to log event: %v", err)
 	}
 
@@ -94,9 +94,11 @@ func runStatusAskUser(message string) {
 	if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityWaitingForInput}
 		if err := hubClient.UpdateStatus(ctx, hub.StatusUpdate{
-			Status:  hub.StatusWaitingForInput,
-			Message: message,
+			Activity: state.ActivityWaitingForInput,
+			Status:   as.DisplayStatus(),
+			Message:  message,
 		}); err != nil {
 			log.Error("Failed to report to Hub: %v", err)
 		}
@@ -110,14 +112,14 @@ func runStatusLimitsExceeded(message string) {
 	statusHandler := handlers.NewStatusHandler()
 	loggingHandler := handlers.NewLoggingHandler()
 
-	// Update status to limits exceeded (sticky)
-	if err := statusHandler.UpdateStatus(hooks.StateLimitsExceeded); err != nil {
+	// Update activity to limits_exceeded (sticky)
+	if err := statusHandler.UpdateActivity(state.ActivityLimitsExceeded, ""); err != nil {
 		log.Error("Failed to update status: %v", err)
 	}
 
 	// Log the event
 	logMessage := fmt.Sprintf("Agent limits exceeded: %s", message)
-	if err := loggingHandler.LogEvent(hooks.StateLimitsExceeded, logMessage); err != nil {
+	if err := loggingHandler.LogEvent(string(state.ActivityLimitsExceeded), logMessage); err != nil {
 		log.Error("Failed to log event: %v", err)
 	}
 
@@ -125,7 +127,12 @@ func runStatusLimitsExceeded(message string) {
 	if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := hubClient.ReportLimitsExceeded(ctx, message); err != nil {
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityLimitsExceeded}
+		if err := hubClient.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity: state.ActivityLimitsExceeded,
+			Status:   as.DisplayStatus(),
+			Message:  message,
+		}); err != nil {
 			log.Error("Failed to report to Hub: %v", err)
 		}
 	}
@@ -138,14 +145,14 @@ func runStatusTaskCompleted(message string) {
 	statusHandler := handlers.NewStatusHandler()
 	loggingHandler := handlers.NewLoggingHandler()
 
-	// Update status to completed (sticky)
-	if err := statusHandler.UpdateStatus(hooks.StateCompleted); err != nil {
+	// Update activity to completed (sticky)
+	if err := statusHandler.UpdateActivity(state.ActivityCompleted, ""); err != nil {
 		log.Error("Failed to update status: %v", err)
 	}
 
 	// Log the event
 	logMessage := fmt.Sprintf("Agent completed task: %s", message)
-	if err := loggingHandler.LogEvent(hooks.StateCompleted, logMessage); err != nil {
+	if err := loggingHandler.LogEvent(string(state.ActivityCompleted), logMessage); err != nil {
 		log.Error("Failed to log event: %v", err)
 	}
 
@@ -153,7 +160,12 @@ func runStatusTaskCompleted(message string) {
 	if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := hubClient.ReportTaskCompleted(ctx, message); err != nil {
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityCompleted}
+		if err := hubClient.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity:    state.ActivityCompleted,
+			Status:      as.DisplayStatus(),
+			TaskSummary: message,
+		}); err != nil {
 			log.Error("Failed to report to Hub: %v", err)
 		}
 	}

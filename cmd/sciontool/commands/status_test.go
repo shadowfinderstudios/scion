@@ -26,49 +26,57 @@ func TestStatusCommand(t *testing.T) {
 		name            string
 		args            []string
 		wantErr         bool
+		wantActivity    string
 		wantStatus      string
 		wantLogContains string
 	}{
 		{
 			name:            "ask_user with message",
 			args:            []string{"status", "ask_user", "What should I do?"},
-			wantStatus:      "WAITING_FOR_INPUT",
+			wantActivity:    "waiting_for_input",
+			wantStatus:      "waiting_for_input",
 			wantLogContains: "Agent requested input: What should I do?",
 		},
 		{
 			name:            "ask_user with default message",
 			args:            []string{"status", "ask_user"},
-			wantStatus:      "WAITING_FOR_INPUT",
+			wantActivity:    "waiting_for_input",
+			wantStatus:      "waiting_for_input",
 			wantLogContains: "Agent requested input: Input requested",
 		},
 		{
 			name:            "task_completed with message",
 			args:            []string{"status", "task_completed", "Finished the feature"},
-			wantStatus:      "COMPLETED",
+			wantActivity:    "completed",
+			wantStatus:      "completed",
 			wantLogContains: "Agent completed task: Finished the feature",
 		},
 		{
 			name:            "task_completed with default message",
 			args:            []string{"status", "task_completed"},
-			wantStatus:      "COMPLETED",
+			wantActivity:    "completed",
+			wantStatus:      "completed",
 			wantLogContains: "Agent completed task: Task completed",
 		},
 		{
 			name:            "ask_user with multi-word message",
 			args:            []string{"status", "ask_user", "Which", "option", "do", "you", "prefer?"},
-			wantStatus:      "WAITING_FOR_INPUT",
+			wantActivity:    "waiting_for_input",
+			wantStatus:      "waiting_for_input",
 			wantLogContains: "Agent requested input: Which option do you prefer?",
 		},
 		{
 			name:            "limits_exceeded with message",
 			args:            []string{"status", "limits_exceeded", "max_turns of 50 exceeded"},
-			wantStatus:      "LIMITS_EXCEEDED",
+			wantActivity:    "limits_exceeded",
+			wantStatus:      "limits_exceeded",
 			wantLogContains: "Agent limits exceeded: max_turns of 50 exceeded",
 		},
 		{
 			name:            "limits_exceeded with default message",
 			args:            []string{"status", "limits_exceeded"},
-			wantStatus:      "LIMITS_EXCEEDED",
+			wantActivity:    "limits_exceeded",
+			wantStatus:      "limits_exceeded",
 			wantLogContains: "Agent limits exceeded: Agent limits exceeded",
 		},
 	}
@@ -90,7 +98,7 @@ func TestStatusCommand(t *testing.T) {
 				return
 			}
 
-			// Check the status file was created with correct session status
+			// Check the status file was created with correct fields
 			data, err := os.ReadFile(statusFile)
 			if err != nil {
 				t.Fatalf("Failed to read status file: %v", err)
@@ -99,6 +107,10 @@ func TestStatusCommand(t *testing.T) {
 			var info map[string]string
 			if err := json.Unmarshal(data, &info); err != nil {
 				t.Fatalf("Failed to parse status file: %v", err)
+			}
+
+			if got := info["activity"]; got != tt.wantActivity {
+				t.Errorf("activity = %q, want %q", got, tt.wantActivity)
 			}
 
 			if got := info["status"]; got != tt.wantStatus {

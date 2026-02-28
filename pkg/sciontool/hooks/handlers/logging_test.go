@@ -23,7 +23,7 @@ func TestLoggingHandler_LogEvent(t *testing.T) {
 
 	h := &LoggingHandler{}
 
-	err := h.LogEvent(hooks.StateThinking, "Test message")
+	err := h.LogEvent("thinking", "Test message")
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(logPath)
@@ -31,7 +31,7 @@ func TestLoggingHandler_LogEvent(t *testing.T) {
 
 	content := string(data)
 	assert.Contains(t, content, "[sciontool]")
-	assert.Contains(t, content, "[THINKING]")
+	assert.Contains(t, content, "[thinking]")
 	assert.Contains(t, content, "Test message")
 }
 

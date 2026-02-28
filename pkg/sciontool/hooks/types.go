@@ -75,24 +75,6 @@ const (
 	EventModelEnd   = "model-end"
 )
 
-// AgentState represents the current state of an agent.
-type AgentState string
-
-// Agent state constants.
-const (
-	StateIdle            AgentState = "IDLE"
-	StateStarting        AgentState = "STARTING"
-	StateInitializing    AgentState = "INITIALIZING"
-	StateThinking        AgentState = "THINKING"
-	StateExecuting       AgentState = "EXECUTING"
-	StateWaitingForInput AgentState = "WAITING_FOR_INPUT"
-	StateCompleted       AgentState = "COMPLETED"
-	StateShuttingDown    AgentState = "SHUTTING_DOWN"
-	StateExited          AgentState = "EXITED"
-	StateError           AgentState = "ERROR"
-	StateLimitsExceeded  AgentState = "LIMITS_EXCEEDED"
-)
-
 // Handler is a function that processes a hook event.
 type Handler func(event *Event) error
 

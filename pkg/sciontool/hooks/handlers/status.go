@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"sync"
 
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
 )
 
 // StatusHandler manages agent status in a JSON file.
-// It replicates the functionality of scion_tool.py's update_status function.
 type StatusHandler struct {
 	// StatusPath is the path to the agent-info.json file.
 	StatusPath string
@@ -35,65 +35,88 @@ func NewStatusHandler() *StatusHandler {
 	}
 }
 
-// isStickyStatus returns true if the given status is a "sticky" value that
+// isStickyActivity returns true if the given activity is a "sticky" value that
 // should resist being overwritten by normal event-driven updates.
-func isStickyStatus(status string) bool {
-	switch status {
-	case string(hooks.StateWaitingForInput), string(hooks.StateCompleted), string(hooks.StateLimitsExceeded):
-		return true
-	}
-	return false
+func isStickyActivity(activity string) bool {
+	return state.Activity(activity).IsSticky()
+}
+
+// eventResult holds the result of mapping an event to phase/activity.
+type eventResult struct {
+	phase    state.Phase
+	activity state.Activity
+	isPhase  bool // true if this is a phase-level change
 }
 
 // Handle processes an event and updates the agent status.
 func (h *StatusHandler) Handle(event *hooks.Event) error {
-	state := h.eventToState(event)
-	if state == "" {
+	result := eventToPhaseActivity(event)
+	if result == nil {
 		return nil // Event doesn't trigger a state change
 	}
 
+	// Phase-level changes (pre-start, post-start, pre-stop, session-end)
+	if result.isPhase {
+		return h.UpdatePhase(result.phase, result.activity, "")
+	}
+
 	// New work events (prompt-submit, agent-start, session-start): always
-	// update status unconditionally — clears any sticky state.
+	// update activity unconditionally — clears any sticky state.
 	if isNewWorkEvent(event.Name) {
-		return h.UpdateStatus(state)
+		return h.UpdateActivity(result.activity, "")
 	}
 
 	// Tool-start events require special handling for sticky states.
 	if event.Name == hooks.EventToolStart {
-		// Claude-specific: ExitPlanMode and AskUserQuestion set WAITING_FOR_INPUT (sticky).
+		// Claude-specific: ExitPlanMode and AskUserQuestion set waiting_for_input (sticky).
 		if event.Dialect == "claude" && (event.Data.ToolName == "ExitPlanMode" || event.Data.ToolName == "AskUserQuestion") {
-			return h.UpdateStatus(hooks.StateWaitingForInput)
+			return h.UpdateActivity(state.ActivityWaitingForInput, "")
 		}
 
-		// Tool-start clears WAITING_FOR_INPUT (user has responded) but
-		// preserves COMPLETED (tools may fire after task_completed as wrap-up).
-		return h.updateStatusIfNotSticky(state, true)
+		// Tool-start clears waiting_for_input (user has responded) but
+		// preserves completed (tools may fire after task_completed as wrap-up).
+		return h.updateActivityIfNotSticky(result.activity, event.Data.ToolName, true)
 	}
 
-	// Notification event: set WAITING_FOR_INPUT directly (sticky).
+	// Notification event: set waiting_for_input directly (sticky).
 	if event.Name == hooks.EventNotification {
-		return h.UpdateStatus(hooks.StateWaitingForInput)
+		return h.UpdateActivity(state.ActivityWaitingForInput, "")
 	}
 
-	// All other events (tool-end, agent-end, model-end, etc.): update status
-	// only if current status is not sticky.
-	return h.updateStatusIfNotSticky(state, false)
+	// All other events (tool-end, agent-end, model-end, etc.): update activity
+	// only if current activity is not sticky.
+	return h.updateActivityIfNotSticky(result.activity, "", false)
 }
 
-// UpdateStatus writes the status to the agent-info.json file atomically.
-func (h *StatusHandler) UpdateStatus(status hooks.AgentState) error {
+// UpdateActivity writes the activity to the agent-info.json file atomically.
+// Used for runtime activity changes (most events). Preserves the current phase.
+func (h *StatusHandler) UpdateActivity(activity state.Activity, toolName string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// Read existing data preserving all fields
 	info := h.readAgentInfoMap()
 
-	// Update the status field
-	if status == "" {
-		delete(info, "status")
+	// Update the activity field
+	if activity == "" {
+		delete(info, "activity")
 	} else {
-		info["status"] = string(status)
+		info["activity"] = string(activity)
 	}
+
+	// Set or clear toolName
+	if activity == state.ActivityExecuting && toolName != "" {
+		info["toolName"] = toolName
+	} else {
+		delete(info, "toolName")
+	}
+
+	// Compute backward-compat status field
+	phase, _ := info["phase"].(string)
+	if phase == "" {
+		phase = string(state.PhaseRunning) // assume running if not set
+	}
+	as := state.AgentState{Phase: state.Phase(phase), Activity: activity}
+	info["status"] = as.DisplayStatus()
 
 	// Remove legacy sessionStatus field if present
 	delete(info, "sessionStatus")
@@ -101,28 +124,78 @@ func (h *StatusHandler) UpdateStatus(status hooks.AgentState) error {
 	return h.writeAgentInfoLocked(info)
 }
 
-// updateStatusIfNotSticky updates the status only if the current status is not
-// sticky. If clearWaiting is true, WAITING_FOR_INPUT is also cleared (treated
-// as non-sticky for tool-start events where the user has responded).
-func (h *StatusHandler) updateStatusIfNotSticky(status hooks.AgentState, clearWaiting bool) error {
+// UpdatePhase writes both phase and activity to the agent-info.json file atomically.
+// Used for lifecycle phase changes (pre-start, post-start, pre-stop, session-end).
+func (h *StatusHandler) UpdatePhase(phase state.Phase, activity state.Activity, toolName string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	info := h.readAgentInfoMap()
 
-	currentStatus, _ := info["status"].(string)
+	// Update phase
+	info["phase"] = string(phase)
 
-	if isStickyStatus(currentStatus) {
-		if clearWaiting && currentStatus == string(hooks.StateWaitingForInput) {
-			// WAITING_FOR_INPUT is cleared by tool-start (user has responded)
-			info["status"] = string(status)
-			delete(info, "sessionStatus")
-			return h.writeAgentInfoLocked(info)
-		}
-		return nil // Status is sticky, don't overwrite
+	// Update activity
+	if activity == "" {
+		delete(info, "activity")
+	} else {
+		info["activity"] = string(activity)
 	}
 
-	info["status"] = string(status)
+	// Set or clear toolName
+	if activity == state.ActivityExecuting && toolName != "" {
+		info["toolName"] = toolName
+	} else {
+		delete(info, "toolName")
+	}
+
+	// Compute backward-compat status field
+	as := state.AgentState{Phase: phase, Activity: activity}
+	info["status"] = as.DisplayStatus()
+
+	// Remove legacy sessionStatus field if present
+	delete(info, "sessionStatus")
+
+	return h.writeAgentInfoLocked(info)
+}
+
+// updateActivityIfNotSticky updates the activity only if the current activity is not
+// sticky. If clearWaiting is true, waiting_for_input is also cleared (treated
+// as non-sticky for tool-start events where the user has responded).
+func (h *StatusHandler) updateActivityIfNotSticky(activity state.Activity, toolName string, clearWaiting bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	info := h.readAgentInfoMap()
+
+	currentActivity, _ := info["activity"].(string)
+
+	if isStickyActivity(currentActivity) {
+		if clearWaiting && currentActivity == string(state.ActivityWaitingForInput) {
+			// waiting_for_input is cleared by tool-start (user has responded)
+		} else {
+			return nil // Activity is sticky, don't overwrite
+		}
+	}
+
+	// Update activity
+	info["activity"] = string(activity)
+
+	// Set or clear toolName
+	if activity == state.ActivityExecuting && toolName != "" {
+		info["toolName"] = toolName
+	} else {
+		delete(info, "toolName")
+	}
+
+	// Compute backward-compat status field
+	phase, _ := info["phase"].(string)
+	if phase == "" {
+		phase = string(state.PhaseRunning)
+	}
+	as := state.AgentState{Phase: state.Phase(phase), Activity: activity}
+	info["status"] = as.DisplayStatus()
+
 	delete(info, "sessionStatus")
 	return h.writeAgentInfoLocked(info)
 }
@@ -168,7 +241,7 @@ func (h *StatusHandler) writeAgentInfoLocked(info map[string]interface{}) error 
 }
 
 // isNewWorkEvent returns true for events that indicate new work is starting.
-// These events unconditionally update status, clearing any sticky state.
+// These events unconditionally update activity, clearing any sticky state.
 func isNewWorkEvent(name string) bool {
 	switch name {
 	case hooks.EventPromptSubmit, hooks.EventAgentStart, hooks.EventSessionStart:
@@ -177,57 +250,60 @@ func isNewWorkEvent(name string) bool {
 	return false
 }
 
-// eventToState maps normalized events to agent states.
-func (h *StatusHandler) eventToState(event *hooks.Event) hooks.AgentState {
+// eventToPhaseActivity maps normalized events to phase/activity pairs.
+// Returns nil if the event doesn't trigger a state change.
+func eventToPhaseActivity(event *hooks.Event) *eventResult {
 	switch event.Name {
-	case hooks.EventSessionStart:
-		return hooks.StateStarting
-
 	case hooks.EventPreStart:
-		return hooks.StateInitializing
+		return &eventResult{phase: state.PhaseStarting, isPhase: true}
 
 	case hooks.EventPostStart:
-		return hooks.StateIdle
+		return &eventResult{phase: state.PhaseRunning, activity: state.ActivityIdle, isPhase: true}
 
-	case hooks.EventPreStop:
-		return hooks.StateShuttingDown
+	case hooks.EventSessionStart:
+		// session-start clears sticky — treated as activity-only (idle)
+		return &eventResult{activity: state.ActivityIdle}
 
 	case hooks.EventPromptSubmit, hooks.EventAgentStart:
-		return hooks.StateThinking
+		return &eventResult{activity: state.ActivityThinking}
 
 	case hooks.EventModelStart:
-		return hooks.StateThinking
+		return &eventResult{activity: state.ActivityThinking}
 
 	case hooks.EventModelEnd:
-		return hooks.StateIdle
+		return &eventResult{activity: state.ActivityIdle}
 
 	case hooks.EventToolStart:
-		// Include tool name in state if available
-		if event.Data.ToolName != "" {
-			// Return a dynamic state - caller should handle formatting
-			return hooks.StateExecuting
-		}
-		return hooks.StateExecuting
+		return &eventResult{activity: state.ActivityExecuting}
 
 	case hooks.EventToolEnd, hooks.EventAgentEnd:
-		return hooks.StateIdle
+		return &eventResult{activity: state.ActivityIdle}
 
 	case hooks.EventNotification:
-		return hooks.StateWaitingForInput
+		return &eventResult{activity: state.ActivityWaitingForInput}
+
+	case hooks.EventPreStop:
+		return &eventResult{phase: state.PhaseStopping, isPhase: true}
 
 	case hooks.EventSessionEnd:
-		return hooks.StateExited
+		return &eventResult{phase: state.PhaseStopped, isPhase: true}
 
 	default:
-		return "" // No state change
+		return nil
 	}
 }
 
 // GetFormattedState returns the state with tool name if applicable.
 func (h *StatusHandler) GetFormattedState(event *hooks.Event) string {
-	state := h.eventToState(event)
-	if state == hooks.StateExecuting && event.Data.ToolName != "" {
-		return fmt.Sprintf("%s (%s)", state, event.Data.ToolName)
+	result := eventToPhaseActivity(event)
+	if result == nil {
+		return ""
 	}
-	return string(state)
+	if result.activity == state.ActivityExecuting && event.Data.ToolName != "" {
+		return fmt.Sprintf("%s (%s)", result.activity, event.Data.ToolName)
+	}
+	if result.isPhase {
+		return string(result.phase)
+	}
+	return string(result.activity)
 }

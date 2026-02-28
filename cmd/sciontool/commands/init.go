@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/api"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks/handlers"
@@ -199,7 +200,7 @@ func runInit(args []string) int {
 		log.Error("Git clone failed: %v", err)
 		if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 			hubCtx, hubCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			hubClient.ReportError(hubCtx, fmt.Sprintf("git clone failed: %v", err))
+			hubClient.ReportState(hubCtx, state.PhaseError, "", fmt.Sprintf("git clone failed: %v", err))
 			hubCancel()
 		}
 		return 1
@@ -302,7 +303,7 @@ func runInit(args []string) int {
 			os.Getenv("SCION_HUB_ENDPOINT"), os.Getenv("SCION_HUB_URL"), os.Getenv("SCION_AUTH_TOKEN") != "", os.Getenv("SCION_AGENT_ID"))
 		if hubClient != nil && hubClient.IsConfigured() {
 			hubCtx, hubCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := hubClient.ReportRunning(hubCtx, "Agent started"); err != nil {
+			if err := hubClient.ReportState(hubCtx, state.PhaseRunning, state.ActivityIdle, "Agent started"); err != nil {
 				log.Error("Failed to report running status to Hub: %v", err)
 			} else {
 				log.Info("Reported running status to Hub")
@@ -341,7 +342,7 @@ func runInit(args []string) int {
 	// Report shutting down to Hub if in hosted mode
 	if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 		hubCtx, hubCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := hubClient.ReportShuttingDown(hubCtx, "Agent shutting down"); err != nil {
+		if err := hubClient.ReportState(hubCtx, state.PhaseStopping, "", "Agent shutting down"); err != nil {
 			log.Error("Failed to report shutdown status to Hub: %v", err)
 		}
 		hubCancel()
@@ -366,7 +367,7 @@ func runInit(args []string) int {
 	// Report final stopped status to Hub
 	if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 		hubCtx, hubCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := hubClient.ReportStopped(hubCtx, "Agent stopped"); err != nil {
+		if err := hubClient.ReportState(hubCtx, state.PhaseStopped, "", "Agent stopped"); err != nil {
 			log.Error("Failed to report stopped status to Hub: %v", err)
 		} else {
 			log.Info("Reported stopped status to Hub")
@@ -563,9 +564,14 @@ func gitCloneWorkspace() error {
 	normalizedURL := util.NormalizeGitRemote(cloneURL)
 	if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 		hubCtx, hubCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		hubClient.ReportCloning(hubCtx, "Cloning repository", map[string]string{
-			"repository": normalizedURL,
-			"branch":     branch,
+		hubClient.UpdateStatus(hubCtx, hub.StatusUpdate{
+			Phase:    state.PhaseCloning,
+			Status:   string(state.PhaseCloning),
+			Message:  "Cloning repository",
+			Metadata: map[string]string{
+				"repository": normalizedURL,
+				"branch":     branch,
+			},
 		})
 		hubCancel()
 	}

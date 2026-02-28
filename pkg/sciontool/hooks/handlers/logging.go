@@ -6,12 +6,13 @@ package handlers
 
 import (
 	"fmt"
+
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
 	"github.com/ptone/scion-agent/pkg/sciontool/log"
 )
 
 // LoggingHandler logs hook events to a file.
-// It replicates the functionality of scion_tool.py's log_event function.
 type LoggingHandler struct {
 }
 
@@ -22,45 +23,45 @@ func NewLoggingHandler() *LoggingHandler {
 
 // Handle logs an event to the log file.
 func (h *LoggingHandler) Handle(event *hooks.Event) error {
-	state := h.eventToState(event)
+	tag := h.eventToTag(event)
 	message := h.formatLogMessage(event)
 
-	return h.LogEvent(state, message)
+	return h.LogEvent(tag, message)
 }
 
 // LogEvent writes a log entry to the agent log file.
-func (h *LoggingHandler) LogEvent(state hooks.AgentState, message string) error {
-	log.TaggedInfo(string(state), "%s", message)
+func (h *LoggingHandler) LogEvent(tag string, message string) error {
+	log.TaggedInfo(tag, "%s", message)
 	return nil
 }
 
-// eventToState maps normalized events to agent states for logging.
-func (h *LoggingHandler) eventToState(event *hooks.Event) hooks.AgentState {
+// eventToTag maps normalized events to display tags for logging.
+func (h *LoggingHandler) eventToTag(event *hooks.Event) string {
 	switch event.Name {
 	case hooks.EventSessionStart:
-		return hooks.StateStarting
+		return string(state.PhaseStarting)
 	case hooks.EventPromptSubmit, hooks.EventAgentStart:
-		return hooks.StateThinking
+		return string(state.ActivityThinking)
 	case hooks.EventModelStart:
-		return hooks.StateThinking
+		return string(state.ActivityThinking)
 	case hooks.EventModelEnd:
-		return hooks.StateIdle
+		return string(state.ActivityIdle)
 	case hooks.EventToolStart:
-		return hooks.StateExecuting
+		return string(state.ActivityExecuting)
 	case hooks.EventToolEnd, hooks.EventAgentEnd:
-		return hooks.StateIdle
+		return string(state.ActivityIdle)
 	case hooks.EventNotification:
-		return hooks.StateWaitingForInput
+		return string(state.ActivityWaitingForInput)
 	case hooks.EventSessionEnd:
-		return hooks.StateExited
+		return string(state.PhaseStopped)
 	case hooks.EventPreStart:
-		return hooks.StateInitializing
+		return string(state.PhaseStarting)
 	case hooks.EventPostStart:
-		return hooks.StateIdle
+		return string(state.ActivityIdle)
 	case hooks.EventPreStop:
-		return hooks.StateShuttingDown
+		return string(state.PhaseStopping)
 	default:
-		return hooks.StateIdle
+		return string(state.ActivityIdle)
 	}
 }
 

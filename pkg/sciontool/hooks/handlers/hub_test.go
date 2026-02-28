@@ -25,29 +25,29 @@ func TestHubHandler_EventMapping(t *testing.T) {
 		expectedStatus string
 	}{
 		{
-			name:           "session start sends running",
+			name:           "session start sends idle (running phase)",
 			eventName:      hooks.EventSessionStart,
 			expectCall:     true,
-			expectedStatus: "running",
+			expectedStatus: "idle",
 		},
 		{
-			name:           "prompt submit sends busy",
+			name:           "prompt submit sends thinking",
 			eventName:      hooks.EventPromptSubmit,
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "thinking",
 		},
 		{
-			name:           "agent start sends busy",
+			name:           "agent start sends thinking",
 			eventName:      hooks.EventAgentStart,
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "thinking",
 		},
 		{
-			name:           "tool start sends busy",
+			name:           "tool start sends executing",
 			eventName:      hooks.EventToolStart,
 			eventData:      hooks.EventData{ToolName: "Bash"},
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "executing",
 		},
 		{
 			name:           "tool end sends idle",
@@ -105,7 +105,7 @@ func TestHubHandler_EventMapping(t *testing.T) {
 					return
 				}
 
-				// All status updates now use the "status" field
+				// Status field carries backward-compat value
 				if status, ok := payload["status"].(string); ok {
 					receivedStatus = status
 				}
@@ -230,6 +230,9 @@ func TestHubHandler_ReportMethods(t *testing.T) {
 		if receivedPayload["status"] != "waiting_for_input" {
 			t.Errorf("Expected status 'waiting_for_input', got %v", receivedPayload["status"])
 		}
+		if receivedPayload["activity"] != "waiting_for_input" {
+			t.Errorf("Expected activity 'waiting_for_input', got %v", receivedPayload["activity"])
+		}
 		if receivedPayload["message"] != "What should I do?" {
 			t.Errorf("Expected message 'What should I do?', got %v", receivedPayload["message"])
 		}
@@ -250,121 +253,124 @@ func TestHubHandler_ReportMethods(t *testing.T) {
 		if receivedPayload["status"] != "completed" {
 			t.Errorf("Expected status 'completed', got %v", receivedPayload["status"])
 		}
+		if receivedPayload["activity"] != "completed" {
+			t.Errorf("Expected activity 'completed', got %v", receivedPayload["activity"])
+		}
 		if receivedPayload["taskSummary"] != "Fixed the bug" {
 			t.Errorf("Expected taskSummary 'Fixed the bug', got %v", receivedPayload["taskSummary"])
 		}
 	})
 }
 
-// TestHubHandler_StickyStatus tests that the Hub handler respects sticky statuses.
-// When the local status (written by StatusHandler) is WAITING_FOR_INPUT or COMPLETED,
+// TestHubHandler_StickyStatus tests that the Hub handler respects sticky activities.
+// When the local activity (written by StatusHandler) is waiting_for_input or completed,
 // non-new-work events should not overwrite it on the Hub.
 func TestHubHandler_StickyStatus(t *testing.T) {
 	tests := []struct {
 		name           string
-		localStatus    string // status in agent-info.json
+		localActivity  string // activity in agent-info.json
 		eventName      string
 		eventData      hooks.EventData
 		expectCall     bool
 		expectedStatus string
 	}{
 		{
-			name:        "tool-end skipped when local status is WAITING_FOR_INPUT",
-			localStatus: "WAITING_FOR_INPUT",
-			eventName:   hooks.EventToolEnd,
-			expectCall:  false,
+			name:          "tool-end skipped when local activity is waiting_for_input",
+			localActivity: "waiting_for_input",
+			eventName:     hooks.EventToolEnd,
+			expectCall:    false,
 		},
 		{
-			name:        "tool-end skipped when local status is COMPLETED",
-			localStatus: "COMPLETED",
-			eventName:   hooks.EventToolEnd,
-			expectCall:  false,
+			name:          "tool-end skipped when local activity is completed",
+			localActivity: "completed",
+			eventName:     hooks.EventToolEnd,
+			expectCall:    false,
 		},
 		{
-			name:           "tool-end sends idle when local status is IDLE",
-			localStatus:    "IDLE",
+			name:           "tool-end sends idle when local activity is idle",
+			localActivity:  "idle",
 			eventName:      hooks.EventToolEnd,
 			expectCall:     true,
 			expectedStatus: "idle",
 		},
 		{
-			name:        "agent-end skipped when local status is WAITING_FOR_INPUT",
-			localStatus: "WAITING_FOR_INPUT",
-			eventName:   hooks.EventAgentEnd,
-			expectCall:  false,
+			name:          "agent-end skipped when local activity is waiting_for_input",
+			localActivity: "waiting_for_input",
+			eventName:     hooks.EventAgentEnd,
+			expectCall:    false,
 		},
 		{
-			name:        "model-end skipped when local status is COMPLETED",
-			localStatus: "COMPLETED",
-			eventName:   hooks.EventModelEnd,
-			expectCall:  false,
+			name:          "model-end skipped when local activity is completed",
+			localActivity: "completed",
+			eventName:     hooks.EventModelEnd,
+			expectCall:    false,
 		},
 		{
-			name:        "model-start skipped when local status is WAITING_FOR_INPUT",
-			localStatus: "WAITING_FOR_INPUT",
-			eventName:   hooks.EventModelStart,
-			expectCall:  false,
+			name:          "model-start skipped when local activity is waiting_for_input",
+			localActivity: "waiting_for_input",
+			eventName:     hooks.EventModelStart,
+			expectCall:    false,
 		},
 		{
-			name:        "model-start skipped when local status is COMPLETED",
-			localStatus: "COMPLETED",
-			eventName:   hooks.EventModelStart,
-			expectCall:  false,
+			name:          "model-start skipped when local activity is completed",
+			localActivity: "completed",
+			eventName:     hooks.EventModelStart,
+			expectCall:    false,
 		},
 		{
-			name:           "model-start sends busy when local status is IDLE",
-			localStatus:    "IDLE",
+			name:           "model-start sends thinking when local activity is idle",
+			localActivity:  "idle",
 			eventName:      hooks.EventModelStart,
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "thinking",
 		},
 		{
-			name:        "tool-start skipped when local status is COMPLETED",
-			localStatus: "COMPLETED",
-			eventName:   hooks.EventToolStart,
-			eventData:   hooks.EventData{ToolName: "Bash"},
-			expectCall:  false,
+			name:          "tool-start skipped when local activity is completed",
+			localActivity: "completed",
+			eventName:     hooks.EventToolStart,
+			eventData:     hooks.EventData{ToolName: "Bash"},
+			expectCall:    false,
 		},
 		{
-			name:           "tool-start sends busy when local status is IDLE",
-			localStatus:    "IDLE",
+			name:           "tool-start sends executing when local activity is idle",
+			localActivity:  "idle",
 			eventName:      hooks.EventToolStart,
 			eventData:      hooks.EventData{ToolName: "Bash"},
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "executing",
 		},
 		{
-			name:           "prompt-submit always sends busy (clears sticky WAITING_FOR_INPUT)",
-			localStatus:    "WAITING_FOR_INPUT",
+			name:           "prompt-submit always sends thinking (clears sticky waiting_for_input)",
+			localActivity:  "waiting_for_input",
 			eventName:      hooks.EventPromptSubmit,
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "thinking",
 		},
 		{
-			name:           "agent-start always sends busy (clears sticky COMPLETED)",
-			localStatus:    "COMPLETED",
+			name:           "agent-start always sends thinking (clears sticky completed)",
+			localActivity:  "completed",
 			eventName:      hooks.EventAgentStart,
 			expectCall:     true,
-			expectedStatus: "busy",
+			expectedStatus: "thinking",
 		},
 		{
-			name:           "session-start always sends running (clears sticky)",
-			localStatus:    "WAITING_FOR_INPUT",
+			name:           "session-start always sends idle (clears sticky)",
+			localActivity:  "waiting_for_input",
 			eventName:      hooks.EventSessionStart,
 			expectCall:     true,
-			expectedStatus: "running",
+			expectedStatus: "idle",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set up a temp dir with agent-info.json containing the local status
+			// Set up a temp dir with agent-info.json containing the local activity
 			tmpDir := t.TempDir()
-			info := map[string]interface{}{"status": tt.localStatus}
+			info := map[string]interface{}{"activity": tt.localActivity}
 			data, _ := json.Marshal(info)
 			os.WriteFile(tmpDir+"/agent-info.json", data, 0644)
 
-			// Point HOME to the temp dir so readLocalStatus finds our file
+			// Point HOME to the temp dir so readLocalActivity finds our file
 			origHome := os.Getenv("HOME")
 			os.Setenv("HOME", tmpDir)
 			defer os.Setenv("HOME", origHome)

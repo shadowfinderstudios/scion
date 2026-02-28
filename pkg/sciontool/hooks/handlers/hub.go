@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
 	"github.com/ptone/scion-agent/pkg/sciontool/hub"
 	"github.com/ptone/scion-agent/pkg/sciontool/log"
@@ -34,8 +35,8 @@ func NewHubHandler() *HubHandler {
 }
 
 // Handle processes an event and sends a status update to the Hub.
-// It mirrors the sticky status logic from StatusHandler: when the local status
-// is WAITING_FOR_INPUT or COMPLETED, non-new-work events won't overwrite it.
+// It mirrors the sticky activity logic from StatusHandler: when the local activity
+// is waiting_for_input or completed, non-new-work events won't overwrite it.
 func (h *HubHandler) Handle(event *hooks.Event) error {
 	if h == nil || h.client == nil {
 		return nil
@@ -47,9 +48,9 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 	var err error
 	switch event.Name {
 	case hooks.EventSessionStart:
-		// Session starting - report running (clears any sticky status)
-		log.Debug("Hub: Reporting running (session start)")
-		err = h.client.ReportRunning(ctx, "Session started")
+		// Session starting - report running phase with idle activity (clears any sticky)
+		log.Debug("Hub: Reporting running/idle (session start)")
+		err = h.client.ReportState(ctx, state.PhaseRunning, state.ActivityIdle, "Session started")
 
 	case hooks.EventPromptSubmit, hooks.EventAgentStart:
 		// New work events - always clear sticky status
@@ -57,22 +58,31 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 		if event.Data.Prompt != "" {
 			message = truncateMessage(event.Data.Prompt, 100)
 		}
-		log.Debug("Hub: Reporting busy (thinking)")
-		err = h.client.ReportBusy(ctx, message)
+		log.Debug("Hub: Reporting thinking")
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityThinking}
+		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity: state.ActivityThinking,
+			Status:   as.DisplayStatus(),
+			Message:  message,
+		})
 
 	case hooks.EventModelStart:
-		// Model start - report busy, but respect sticky status
-		// (model-start can fire during wrap-up after task completion)
-		if h.isLocalStatusSticky() {
-			log.Debug("Hub: Skipping busy (local status is sticky)")
+		// Model start - report thinking, but respect sticky activity
+		if h.isLocalActivitySticky() {
+			log.Debug("Hub: Skipping thinking (local activity is sticky)")
 			return nil
 		}
 		message := "Processing"
 		if event.Data.Prompt != "" {
 			message = truncateMessage(event.Data.Prompt, 100)
 		}
-		log.Debug("Hub: Reporting busy (thinking)")
-		err = h.client.ReportBusy(ctx, message)
+		log.Debug("Hub: Reporting thinking (model-start)")
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityThinking}
+		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity: state.ActivityThinking,
+			Status:   as.DisplayStatus(),
+			Message:  message,
+		})
 
 	case hooks.EventToolStart:
 		// Claude-specific: ExitPlanMode and AskUserQuestion mean waiting for user
@@ -82,18 +92,20 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 				message = "Waiting for plan approval"
 			}
 			log.Debug("Hub: Reporting waiting_for_input (waiting: %s)", event.Data.ToolName)
+			as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityWaitingForInput}
 			err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
-				Status:  hub.StatusWaitingForInput,
-				Message: message,
+				Activity: state.ActivityWaitingForInput,
+				Status:   as.DisplayStatus(),
+				Message:  message,
 			})
 			break
 		}
 
-		// Tool-start clears WAITING_FOR_INPUT (user has responded) but
-		// preserves COMPLETED (tools may fire after task_completed as wrap-up).
-		localStatus := readLocalStatus()
-		if localStatus == string(hooks.StateCompleted) || localStatus == string(hooks.StateLimitsExceeded) {
-			log.Debug("Hub: Skipping busy (completed is sticky, post-completion tool)")
+		// Tool-start clears waiting_for_input (user has responded) but
+		// preserves completed (tools may fire after task_completed as wrap-up).
+		localActivity := readLocalActivity()
+		if localActivity == string(state.ActivityCompleted) || localActivity == string(state.ActivityLimitsExceeded) {
+			log.Debug("Hub: Skipping executing (completed is sticky, post-completion tool)")
 			return nil
 		}
 
@@ -102,17 +114,28 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 		if event.Data.ToolName != "" {
 			message = "Executing: " + event.Data.ToolName
 		}
-		log.Debug("Hub: Reporting busy (tool: %s)", event.Data.ToolName)
-		err = h.client.ReportBusy(ctx, message)
+		log.Debug("Hub: Reporting executing (tool: %s)", event.Data.ToolName)
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityExecuting}
+		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity: state.ActivityExecuting,
+			ToolName: event.Data.ToolName,
+			Status:   as.DisplayStatus(),
+			Message:  message,
+		})
 
 	case hooks.EventToolEnd, hooks.EventAgentEnd, hooks.EventModelEnd:
-		// Check if local status is sticky before sending idle
-		if h.isLocalStatusSticky() {
-			log.Debug("Hub: Skipping idle (local status is sticky)")
+		// Check if local activity is sticky before sending idle
+		if h.isLocalActivitySticky() {
+			log.Debug("Hub: Skipping idle (local activity is sticky)")
 			return nil
 		}
 		log.Debug("Hub: Reporting idle (step completed)")
-		err = h.client.ReportIdle(ctx, "Ready")
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityIdle}
+		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity: state.ActivityIdle,
+			Status:   as.DisplayStatus(),
+			Message:  "Ready",
+		})
 
 	case hooks.EventNotification:
 		// Agent is waiting for input
@@ -121,16 +144,20 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 			message = truncateMessage(event.Data.Message, 100)
 		}
 		log.Debug("Hub: Reporting waiting_for_input (notification)")
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityWaitingForInput}
 		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
-			Status:  hub.StatusWaitingForInput,
-			Message: message,
+			Activity: state.ActivityWaitingForInput,
+			Status:   as.DisplayStatus(),
+			Message:  message,
 		})
 
 	case hooks.EventSessionEnd:
 		// Session ended
 		log.Debug("Hub: Reporting stopped (session end)")
+		as := state.AgentState{Phase: state.PhaseStopped}
 		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
-			Status:  hub.StatusStopped,
+			Phase:   state.PhaseStopped,
+			Status:  as.DisplayStatus(),
 			Message: "Session ended",
 		})
 
@@ -149,16 +176,15 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 	return nil
 }
 
-// isLocalStatusSticky reads the local agent-info.json (written by StatusHandler
-// which runs before HubHandler) and returns true if the status is sticky
-// (WAITING_FOR_INPUT or COMPLETED).
-func (h *HubHandler) isLocalStatusSticky() bool {
-	status := readLocalStatus()
-	return isStickyStatus(status)
+// isLocalActivitySticky reads the local agent-info.json (written by StatusHandler
+// which runs before HubHandler) and returns true if the activity is sticky.
+func (h *HubHandler) isLocalActivitySticky() bool {
+	activity := readLocalActivity()
+	return isStickyActivity(activity)
 }
 
-// readLocalStatus reads the current status from the local agent-info.json file.
-func readLocalStatus() string {
+// readLocalActivity reads the current activity from the local agent-info.json file.
+func readLocalActivity() string {
 	home := os.Getenv("HOME")
 	if home == "" {
 		home = "/home/scion"
@@ -175,8 +201,8 @@ func readLocalStatus() string {
 		return ""
 	}
 
-	status, _ := info["status"].(string)
-	return status
+	activity, _ := info["activity"].(string)
+	return activity
 }
 
 // ReportWaitingForInput sends a waiting-for-input status to the Hub.
@@ -189,9 +215,11 @@ func (h *HubHandler) ReportWaitingForInput(message string) error {
 	defer cancel()
 
 	log.Debug("Hub: Reporting waiting_for_input (ask_user: %s)", truncateMessage(message, 50))
+	as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityWaitingForInput}
 	return h.client.UpdateStatus(ctx, hub.StatusUpdate{
-		Status:  hub.StatusWaitingForInput,
-		Message: message,
+		Activity: state.ActivityWaitingForInput,
+		Status:   as.DisplayStatus(),
+		Message:  message,
 	})
 }
 
@@ -205,8 +233,10 @@ func (h *HubHandler) ReportTaskCompleted(taskSummary string) error {
 	defer cancel()
 
 	log.Debug("Hub: Reporting task completed: %s", truncateMessage(taskSummary, 50))
+	as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityCompleted}
 	return h.client.UpdateStatus(ctx, hub.StatusUpdate{
-		Status:      hub.StatusCompleted,
+		Activity:    state.ActivityCompleted,
+		Status:      as.DisplayStatus(),
 		TaskSummary: taskSummary,
 	})
 }

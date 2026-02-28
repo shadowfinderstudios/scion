@@ -10,13 +10,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestStatusHandler_UpdateStatus(t *testing.T) {
-	// Create temp dir
+func TestStatusHandler_UpdateActivity(t *testing.T) {
 	tmpDir := t.TempDir()
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 
@@ -24,20 +24,44 @@ func TestStatusHandler_UpdateStatus(t *testing.T) {
 		StatusPath: statusPath,
 	}
 
-	// Test updating status
-	err := h.UpdateStatus(hooks.StateThinking)
+	// Test updating activity
+	err := h.UpdateActivity(state.ActivityThinking, "")
 	require.NoError(t, err)
 
-	// Verify file contents
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "THINKING", info.Status)
+	assert.Equal(t, "thinking", info.Activity)
+	assert.Equal(t, "thinking", info.Status) // backward compat
 
-	// Test updating to sticky status (WAITING_FOR_INPUT)
-	err = h.UpdateStatus(hooks.StateWaitingForInput)
+	// Test updating to sticky activity (waiting_for_input)
+	err = h.UpdateActivity(state.ActivityWaitingForInput, "")
 	require.NoError(t, err)
 
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status)
+	assert.Equal(t, "waiting_for_input", info.Activity)
+	assert.Equal(t, "waiting_for_input", info.Status)
+}
+
+func TestStatusHandler_UpdatePhase(t *testing.T) {
+	tmpDir := t.TempDir()
+	statusPath := filepath.Join(tmpDir, "agent-info.json")
+
+	h := &StatusHandler{StatusPath: statusPath}
+
+	err := h.UpdatePhase(state.PhaseStarting, "", "")
+	require.NoError(t, err)
+
+	info := readAgentInfo(t, statusPath)
+	assert.Equal(t, "starting", info.Phase)
+	assert.Equal(t, "", info.Activity)
+	assert.Equal(t, "starting", info.Status) // phase shown when no activity
+
+	err = h.UpdatePhase(state.PhaseRunning, state.ActivityIdle, "")
+	require.NoError(t, err)
+
+	info = readAgentInfo(t, statusPath)
+	assert.Equal(t, "running", info.Phase)
+	assert.Equal(t, "idle", info.Activity)
+	assert.Equal(t, "idle", info.Status) // activity shown when phase is running
 }
 
 func TestStatusHandler_Handle(t *testing.T) {
@@ -49,54 +73,59 @@ func TestStatusHandler_Handle(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		event      *hooks.Event
-		wantStatus hooks.AgentState
+		name         string
+		event        *hooks.Event
+		wantPhase    string
+		wantActivity string
 	}{
 		{
-			name:       "SessionStart sets STARTING",
-			event:      &hooks.Event{Name: hooks.EventSessionStart},
-			wantStatus: hooks.StateStarting,
+			name:         "PreStart sets starting phase",
+			event:        &hooks.Event{Name: hooks.EventPreStart},
+			wantPhase:    "starting",
+			wantActivity: "",
 		},
 		{
-			name:       "PreStart sets INITIALIZING",
-			event:      &hooks.Event{Name: hooks.EventPreStart},
-			wantStatus: hooks.StateInitializing,
+			name:         "PostStart sets running/idle",
+			event:        &hooks.Event{Name: hooks.EventPostStart},
+			wantPhase:    "running",
+			wantActivity: "idle",
 		},
 		{
-			name:       "PostStart sets IDLE",
-			event:      &hooks.Event{Name: hooks.EventPostStart},
-			wantStatus: hooks.StateIdle,
+			name:         "SessionStart sets idle activity",
+			event:        &hooks.Event{Name: hooks.EventSessionStart},
+			wantActivity: "idle",
 		},
 		{
-			name:       "PreStop sets SHUTTING_DOWN",
-			event:      &hooks.Event{Name: hooks.EventPreStop},
-			wantStatus: hooks.StateShuttingDown,
+			name:         "PreStop sets stopping phase",
+			event:        &hooks.Event{Name: hooks.EventPreStop},
+			wantPhase:    "stopping",
+			wantActivity: "",
 		},
 		{
-			name:       "PromptSubmit sets THINKING",
-			event:      &hooks.Event{Name: hooks.EventPromptSubmit},
-			wantStatus: hooks.StateThinking,
+			name:         "PromptSubmit sets thinking",
+			event:        &hooks.Event{Name: hooks.EventPromptSubmit},
+			wantActivity: "thinking",
 		},
 		{
-			name:       "ToolStart sets EXECUTING",
-			event:      &hooks.Event{Name: hooks.EventToolStart, Data: hooks.EventData{ToolName: "Bash"}},
-			wantStatus: hooks.StateExecuting,
+			name:         "ToolStart sets executing",
+			event:        &hooks.Event{Name: hooks.EventToolStart, Data: hooks.EventData{ToolName: "Bash"}},
+			wantActivity: "executing",
 		},
 		{
-			name:       "ToolEnd sets IDLE",
-			event:      &hooks.Event{Name: hooks.EventToolEnd},
-			wantStatus: hooks.StateIdle,
+			name:         "ToolEnd sets idle",
+			event:        &hooks.Event{Name: hooks.EventToolEnd},
+			wantActivity: "idle",
 		},
 		{
-			name:       "AgentEnd sets IDLE",
-			event:      &hooks.Event{Name: hooks.EventAgentEnd},
-			wantStatus: hooks.StateIdle,
+			name:         "AgentEnd sets idle",
+			event:        &hooks.Event{Name: hooks.EventAgentEnd},
+			wantActivity: "idle",
 		},
 		{
-			name:       "SessionEnd sets EXITED",
-			event:      &hooks.Event{Name: hooks.EventSessionEnd},
-			wantStatus: hooks.StateExited,
+			name:         "SessionEnd sets stopped phase",
+			event:        &hooks.Event{Name: hooks.EventSessionEnd},
+			wantPhase:    "stopped",
+			wantActivity: "",
 		},
 	}
 
@@ -106,9 +135,36 @@ func TestStatusHandler_Handle(t *testing.T) {
 			require.NoError(t, err)
 
 			info := readAgentInfo(t, statusPath)
-			assert.Equal(t, string(tt.wantStatus), info.Status)
+			if tt.wantPhase != "" {
+				assert.Equal(t, tt.wantPhase, info.Phase)
+			}
+			assert.Equal(t, tt.wantActivity, info.Activity)
 		})
 	}
+}
+
+func TestStatusHandler_ToolStartSetsToolName(t *testing.T) {
+	tmpDir := t.TempDir()
+	statusPath := filepath.Join(tmpDir, "agent-info.json")
+	h := &StatusHandler{StatusPath: statusPath}
+
+	err := h.Handle(&hooks.Event{
+		Name: hooks.EventToolStart,
+		Data: hooks.EventData{ToolName: "Bash"},
+	})
+	require.NoError(t, err)
+
+	info := readAgentInfo(t, statusPath)
+	assert.Equal(t, "executing", info.Activity)
+	assert.Equal(t, "Bash", info.ToolName)
+
+	// Tool-end should clear toolName
+	err = h.Handle(&hooks.Event{Name: hooks.EventToolEnd})
+	require.NoError(t, err)
+
+	info = readAgentInfo(t, statusPath)
+	assert.Equal(t, "idle", info.Activity)
+	assert.Equal(t, "", info.ToolName)
 }
 
 func TestStatusHandler_StickyWaitingClearedByToolStart(t *testing.T) {
@@ -117,15 +173,14 @@ func TestStatusHandler_StickyWaitingClearedByToolStart(t *testing.T) {
 
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Set status to WAITING_FOR_INPUT (sticky)
-	err := h.UpdateStatus(hooks.StateWaitingForInput)
+	// Set activity to waiting_for_input (sticky)
+	err := h.UpdateActivity(state.ActivityWaitingForInput, "")
 	require.NoError(t, err)
 
-	// Verify it's set
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status)
+	assert.Equal(t, "waiting_for_input", info.Activity)
 
-	// Tool-start should clear WAITING_FOR_INPUT (user has responded)
+	// Tool-start should clear waiting_for_input (user has responded)
 	err = h.Handle(&hooks.Event{
 		Name: hooks.EventToolStart,
 		Data: hooks.EventData{ToolName: "Bash"},
@@ -133,7 +188,7 @@ func TestStatusHandler_StickyWaitingClearedByToolStart(t *testing.T) {
 	require.NoError(t, err)
 
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "EXECUTING", info.Status, "tool-start should clear WAITING_FOR_INPUT")
+	assert.Equal(t, "executing", info.Activity, "tool-start should clear waiting_for_input")
 }
 
 func TestStatusHandler_StickyCompletedNotClearedByToolStart(t *testing.T) {
@@ -142,11 +197,11 @@ func TestStatusHandler_StickyCompletedNotClearedByToolStart(t *testing.T) {
 
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Set status to COMPLETED (sticky)
-	err := h.UpdateStatus(hooks.StateCompleted)
+	// Set activity to completed (sticky)
+	err := h.UpdateActivity(state.ActivityCompleted, "")
 	require.NoError(t, err)
 
-	// Tool-start should NOT clear COMPLETED
+	// Tool-start should NOT clear completed
 	err = h.Handle(&hooks.Event{
 		Name: hooks.EventToolStart,
 		Data: hooks.EventData{ToolName: "Bash"},
@@ -154,7 +209,7 @@ func TestStatusHandler_StickyCompletedNotClearedByToolStart(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "COMPLETED should not be cleared by tool-start")
+	assert.Equal(t, "completed", info.Activity, "completed should not be cleared by tool-start")
 }
 
 func TestStatusHandler_Handle_ClearsWaitingOnActivity(t *testing.T) {
@@ -182,8 +237,8 @@ func TestStatusHandler_Handle_ClearsWaitingOnActivity(t *testing.T) {
 			statusPath := filepath.Join(tmpDir, "agent-info.json")
 			h := &StatusHandler{StatusPath: statusPath}
 
-			// Pre-set status to WAITING_FOR_INPUT
-			err := h.UpdateStatus(hooks.StateWaitingForInput)
+			// Pre-set activity to waiting_for_input
+			err := h.UpdateActivity(state.ActivityWaitingForInput, "")
 			require.NoError(t, err)
 
 			// Handle the activity event
@@ -191,7 +246,7 @@ func TestStatusHandler_Handle_ClearsWaitingOnActivity(t *testing.T) {
 			require.NoError(t, err)
 
 			info := readAgentInfo(t, statusPath)
-			assert.NotEqual(t, "WAITING_FOR_INPUT", info.Status, "WAITING_FOR_INPUT should be cleared")
+			assert.NotEqual(t, "waiting_for_input", info.Activity, "waiting_for_input should be cleared")
 		})
 	}
 }
@@ -201,8 +256,8 @@ func TestStatusHandler_Handle_DoesNotClearCompletedOnToolStart(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Pre-set status to COMPLETED
-	err := h.UpdateStatus(hooks.StateCompleted)
+	// Pre-set activity to completed
+	err := h.UpdateActivity(state.ActivityCompleted, "")
 	require.NoError(t, err)
 
 	// Handle a tool-start event — tools may fire after task_completed as wrap-up
@@ -213,7 +268,7 @@ func TestStatusHandler_Handle_DoesNotClearCompletedOnToolStart(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "COMPLETED should not be cleared by tool-start")
+	assert.Equal(t, "completed", info.Activity, "completed should not be cleared by tool-start")
 }
 
 func TestStatusHandler_Handle_DoesNotClearCompletedOnAgentEnd(t *testing.T) {
@@ -221,23 +276,23 @@ func TestStatusHandler_Handle_DoesNotClearCompletedOnAgentEnd(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Pre-set status to COMPLETED
-	err := h.UpdateStatus(hooks.StateCompleted)
+	// Pre-set activity to completed
+	err := h.UpdateActivity(state.ActivityCompleted, "")
 	require.NoError(t, err)
 
-	// Handle agent-end events — should not clear COMPLETED
+	// Handle agent-end events — should not clear completed
 	err = h.Handle(&hooks.Event{Name: hooks.EventAgentEnd})
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "COMPLETED should not be cleared by agent-end")
+	assert.Equal(t, "completed", info.Activity, "completed should not be cleared by agent-end")
 
 	// Second agent-end (e.g., SubagentStop)
 	err = h.Handle(&hooks.Event{Name: hooks.EventAgentEnd})
 	require.NoError(t, err)
 
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "COMPLETED should survive multiple agent-end events")
+	assert.Equal(t, "completed", info.Activity, "completed should survive multiple agent-end events")
 }
 
 func TestStatusHandler_Handle_DoesNotClearCompletedOnToolEnd(t *testing.T) {
@@ -245,8 +300,8 @@ func TestStatusHandler_Handle_DoesNotClearCompletedOnToolEnd(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Pre-set status to COMPLETED
-	err := h.UpdateStatus(hooks.StateCompleted)
+	// Pre-set activity to completed
+	err := h.UpdateActivity(state.ActivityCompleted, "")
 	require.NoError(t, err)
 
 	// Handle tool-end event
@@ -254,7 +309,7 @@ func TestStatusHandler_Handle_DoesNotClearCompletedOnToolEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "COMPLETED should not be cleared by tool-end")
+	assert.Equal(t, "completed", info.Activity, "completed should not be cleared by tool-end")
 }
 
 func TestStatusHandler_Handle_ClearsCompletedOnNewWork(t *testing.T) {
@@ -282,8 +337,8 @@ func TestStatusHandler_Handle_ClearsCompletedOnNewWork(t *testing.T) {
 			statusPath := filepath.Join(tmpDir, "agent-info.json")
 			h := &StatusHandler{StatusPath: statusPath}
 
-			// Pre-set status to COMPLETED
-			err := h.UpdateStatus(hooks.StateCompleted)
+			// Pre-set activity to completed
+			err := h.UpdateActivity(state.ActivityCompleted, "")
 			require.NoError(t, err)
 
 			// Handle the new-work event
@@ -291,7 +346,7 @@ func TestStatusHandler_Handle_ClearsCompletedOnNewWork(t *testing.T) {
 			require.NoError(t, err)
 
 			info := readAgentInfo(t, statusPath)
-			assert.NotEqual(t, "COMPLETED", info.Status, "COMPLETED should be cleared by new work event")
+			assert.NotEqual(t, "completed", info.Activity, "completed should be cleared by new work event")
 		})
 	}
 }
@@ -304,10 +359,10 @@ func TestStatusHandler_Handle_CompletedLifecycle(t *testing.T) {
 	h := &StatusHandler{StatusPath: statusPath}
 
 	// 1. Agent completes task
-	err := h.UpdateStatus(hooks.StateCompleted)
+	err := h.UpdateActivity(state.ActivityCompleted, "")
 	require.NoError(t, err)
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status)
+	assert.Equal(t, "completed", info.Activity)
 
 	// 2. Wrap-up tool fires (e.g., TaskUpdate)
 	err = h.Handle(&hooks.Event{
@@ -316,32 +371,32 @@ func TestStatusHandler_Handle_CompletedLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "should survive tool-start")
+	assert.Equal(t, "completed", info.Activity, "should survive tool-start")
 
 	// 3. Tool completes
 	err = h.Handle(&hooks.Event{Name: hooks.EventToolEnd})
 	require.NoError(t, err)
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "should survive tool-end")
+	assert.Equal(t, "completed", info.Activity, "should survive tool-end")
 
 	// 4. Agent turn ends (Stop event)
 	err = h.Handle(&hooks.Event{Name: hooks.EventAgentEnd})
 	require.NoError(t, err)
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "should survive agent-end")
+	assert.Equal(t, "completed", info.Activity, "should survive agent-end")
 
 	// 5. Another Stop event (SubagentStop)
 	err = h.Handle(&hooks.Event{Name: hooks.EventAgentEnd})
 	require.NoError(t, err)
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "COMPLETED", info.Status, "should survive second agent-end")
+	assert.Equal(t, "completed", info.Activity, "should survive second agent-end")
 
-	// 6. New prompt arrives — COMPLETED should now be cleared
+	// 6. New prompt arrives — completed should now be cleared
 	err = h.Handle(&hooks.Event{Name: hooks.EventPromptSubmit})
 	require.NoError(t, err)
 	info = readAgentInfo(t, statusPath)
-	assert.NotEqual(t, "COMPLETED", info.Status, "should be cleared by new prompt")
-	assert.Equal(t, "THINKING", info.Status)
+	assert.NotEqual(t, "completed", info.Activity, "should be cleared by new prompt")
+	assert.Equal(t, "thinking", info.Activity)
 }
 
 func TestStatusHandler_Handle_ToolEndDoesNotClearWaiting(t *testing.T) {
@@ -349,8 +404,8 @@ func TestStatusHandler_Handle_ToolEndDoesNotClearWaiting(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Pre-set status to WAITING_FOR_INPUT
-	err := h.UpdateStatus(hooks.StateWaitingForInput)
+	// Pre-set activity to waiting_for_input
+	err := h.UpdateActivity(state.ActivityWaitingForInput, "")
 	require.NoError(t, err)
 
 	// Handle a tool-end event (should NOT clear)
@@ -358,7 +413,7 @@ func TestStatusHandler_Handle_ToolEndDoesNotClearWaiting(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status, "tool-end should not clear waiting")
+	assert.Equal(t, "waiting_for_input", info.Activity, "tool-end should not clear waiting")
 }
 
 func TestStatusHandler_Handle_ClaudeExitPlanMode(t *testing.T) {
@@ -375,7 +430,7 @@ func TestStatusHandler_Handle_ClaudeExitPlanMode(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status)
+	assert.Equal(t, "waiting_for_input", info.Activity)
 }
 
 func TestStatusHandler_Handle_ClaudeAskUserQuestion(t *testing.T) {
@@ -383,8 +438,8 @@ func TestStatusHandler_Handle_ClaudeAskUserQuestion(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Pre-set status to WAITING_FOR_INPUT (simulating sciontool status ask_user)
-	err := h.UpdateStatus(hooks.StateWaitingForInput)
+	// Pre-set activity to waiting_for_input (simulating sciontool status ask_user)
+	err := h.UpdateActivity(state.ActivityWaitingForInput, "")
 	require.NoError(t, err)
 
 	// Handle AskUserQuestion tool-start from Claude dialect
@@ -396,7 +451,7 @@ func TestStatusHandler_Handle_ClaudeAskUserQuestion(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status, "AskUserQuestion should maintain WAITING_FOR_INPUT")
+	assert.Equal(t, "waiting_for_input", info.Activity, "AskUserQuestion should maintain waiting_for_input")
 }
 
 func TestStatusHandler_Handle_NonClaudeExitPlanModeIgnored(t *testing.T) {
@@ -404,7 +459,7 @@ func TestStatusHandler_Handle_NonClaudeExitPlanModeIgnored(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Handle ExitPlanMode from a non-claude dialect — should NOT set WAITING_FOR_INPUT
+	// Handle ExitPlanMode from a non-claude dialect — should NOT set waiting_for_input
 	err := h.Handle(&hooks.Event{
 		Name:    hooks.EventToolStart,
 		Dialect: "gemini",
@@ -413,7 +468,7 @@ func TestStatusHandler_Handle_NonClaudeExitPlanModeIgnored(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "EXECUTING", info.Status, "non-claude ExitPlanMode should set EXECUTING, not WAITING_FOR_INPUT")
+	assert.Equal(t, "executing", info.Activity, "non-claude ExitPlanMode should set executing, not waiting_for_input")
 }
 
 func TestStatusHandler_Handle_ClaudeExitPlanModeThenActivity(t *testing.T) {
@@ -421,7 +476,7 @@ func TestStatusHandler_Handle_ClaudeExitPlanModeThenActivity(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// ExitPlanMode sets WAITING_FOR_INPUT
+	// ExitPlanMode sets waiting_for_input
 	err := h.Handle(&hooks.Event{
 		Name:    hooks.EventToolStart,
 		Dialect: "claude",
@@ -430,16 +485,16 @@ func TestStatusHandler_Handle_ClaudeExitPlanModeThenActivity(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status)
+	assert.Equal(t, "waiting_for_input", info.Activity)
 
 	// Tool-end for ExitPlanMode should NOT clear it (sticky)
 	err = h.Handle(&hooks.Event{Name: hooks.EventToolEnd, Dialect: "claude"})
 	require.NoError(t, err)
 
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status)
+	assert.Equal(t, "waiting_for_input", info.Activity)
 
-	// User approves plan, next tool starts — should clear WAITING_FOR_INPUT
+	// User approves plan, next tool starts — should clear waiting_for_input
 	err = h.Handle(&hooks.Event{
 		Name:    hooks.EventToolStart,
 		Dialect: "claude",
@@ -448,7 +503,7 @@ func TestStatusHandler_Handle_ClaudeExitPlanModeThenActivity(t *testing.T) {
 	require.NoError(t, err)
 
 	info = readAgentInfo(t, statusPath)
-	assert.Equal(t, "EXECUTING", info.Status, "activity after plan approval should clear WAITING_FOR_INPUT")
+	assert.Equal(t, "executing", info.Activity, "activity after plan approval should clear waiting_for_input")
 }
 
 func TestStatusHandler_PreservesExtraFields(t *testing.T) {
@@ -457,7 +512,9 @@ func TestStatusHandler_PreservesExtraFields(t *testing.T) {
 
 	// Seed agent-info.json with extra fields (as written at provisioning time)
 	initial := map[string]interface{}{
-		"status":        "running",
+		"phase":         "running",
+		"activity":      "idle",
+		"status":        "idle",
 		"template":      "my-template",
 		"harnessConfig": "claude",
 		"runtime":       "docker",
@@ -471,12 +528,13 @@ func TestStatusHandler_PreservesExtraFields(t *testing.T) {
 
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Update status — this should NOT destroy the extra fields
-	err = h.UpdateStatus(hooks.StateThinking)
+	// Update activity — this should NOT destroy the extra fields
+	err = h.UpdateActivity(state.ActivityThinking, "")
 	require.NoError(t, err)
 
 	result := readAgentInfoMap(t, statusPath)
-	assert.Equal(t, "THINKING", result["status"])
+	assert.Equal(t, "thinking", result["activity"])
+	assert.Equal(t, "thinking", result["status"])
 	assert.Equal(t, "my-template", result["template"], "template field should be preserved")
 	assert.Equal(t, "claude", result["harnessConfig"], "harnessConfig field should be preserved")
 	assert.Equal(t, "docker", result["runtime"], "runtime field should be preserved")
@@ -484,12 +542,13 @@ func TestStatusHandler_PreservesExtraFields(t *testing.T) {
 	assert.Equal(t, "default", result["profile"], "profile field should be preserved")
 	assert.Equal(t, "agent-1", result["name"], "name field should be preserved")
 
-	// Update to WAITING_FOR_INPUT — extra fields should still be there
-	err = h.UpdateStatus(hooks.StateWaitingForInput)
+	// Update to waiting_for_input — extra fields should still be there
+	err = h.UpdateActivity(state.ActivityWaitingForInput, "")
 	require.NoError(t, err)
 
 	result = readAgentInfoMap(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", result["status"])
+	assert.Equal(t, "waiting_for_input", result["activity"])
+	assert.Equal(t, "waiting_for_input", result["status"])
 	assert.Equal(t, "my-template", result["template"], "template field should survive status update")
 	assert.Equal(t, "claude", result["harnessConfig"], "harnessConfig field should survive status update")
 }
@@ -500,7 +559,9 @@ func TestStatusHandler_RemovesLegacySessionStatus(t *testing.T) {
 
 	// Seed agent-info.json with legacy sessionStatus field
 	initial := map[string]interface{}{
-		"status":        "running",
+		"phase":         "running",
+		"activity":      "idle",
+		"status":        "idle",
 		"sessionStatus": "WAITING_FOR_INPUT",
 	}
 	data, err := json.Marshal(initial)
@@ -509,12 +570,13 @@ func TestStatusHandler_RemovesLegacySessionStatus(t *testing.T) {
 
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Any UpdateStatus call should remove the legacy sessionStatus field
-	err = h.UpdateStatus(hooks.StateThinking)
+	// Any UpdateActivity call should remove the legacy sessionStatus field
+	err = h.UpdateActivity(state.ActivityThinking, "")
 	require.NoError(t, err)
 
 	result := readAgentInfoMap(t, statusPath)
-	assert.Equal(t, "THINKING", result["status"])
+	assert.Equal(t, "thinking", result["activity"])
+	assert.Equal(t, "thinking", result["status"])
 	assert.Nil(t, result["sessionStatus"], "legacy sessionStatus should be removed")
 }
 
@@ -523,11 +585,11 @@ func TestStatusHandler_LimitsExceededIsStickyAgainstToolStart(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Set status to LIMITS_EXCEEDED (sticky)
-	err := h.UpdateStatus(hooks.StateLimitsExceeded)
+	// Set activity to limits_exceeded (sticky)
+	err := h.UpdateActivity(state.ActivityLimitsExceeded, "")
 	require.NoError(t, err)
 
-	// Tool-start should NOT clear LIMITS_EXCEEDED
+	// Tool-start should NOT clear limits_exceeded
 	err = h.Handle(&hooks.Event{
 		Name: hooks.EventToolStart,
 		Data: hooks.EventData{ToolName: "Bash"},
@@ -535,7 +597,7 @@ func TestStatusHandler_LimitsExceededIsStickyAgainstToolStart(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "LIMITS_EXCEEDED", info.Status, "LIMITS_EXCEEDED should not be cleared by tool-start")
+	assert.Equal(t, "limits_exceeded", info.Activity, "limits_exceeded should not be cleared by tool-start")
 }
 
 func TestStatusHandler_LimitsExceededIsStickyAgainstToolEnd(t *testing.T) {
@@ -543,14 +605,14 @@ func TestStatusHandler_LimitsExceededIsStickyAgainstToolEnd(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	err := h.UpdateStatus(hooks.StateLimitsExceeded)
+	err := h.UpdateActivity(state.ActivityLimitsExceeded, "")
 	require.NoError(t, err)
 
 	err = h.Handle(&hooks.Event{Name: hooks.EventToolEnd})
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "LIMITS_EXCEEDED", info.Status, "LIMITS_EXCEEDED should not be cleared by tool-end")
+	assert.Equal(t, "limits_exceeded", info.Activity, "limits_exceeded should not be cleared by tool-end")
 }
 
 func TestStatusHandler_LimitsExceededIsStickyAgainstAgentEnd(t *testing.T) {
@@ -558,14 +620,14 @@ func TestStatusHandler_LimitsExceededIsStickyAgainstAgentEnd(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	err := h.UpdateStatus(hooks.StateLimitsExceeded)
+	err := h.UpdateActivity(state.ActivityLimitsExceeded, "")
 	require.NoError(t, err)
 
 	err = h.Handle(&hooks.Event{Name: hooks.EventAgentEnd})
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "LIMITS_EXCEEDED", info.Status, "LIMITS_EXCEEDED should not be cleared by agent-end")
+	assert.Equal(t, "limits_exceeded", info.Activity, "limits_exceeded should not be cleared by agent-end")
 }
 
 func TestStatusHandler_LimitsExceededNotClearedByCompleted(t *testing.T) {
@@ -573,18 +635,16 @@ func TestStatusHandler_LimitsExceededNotClearedByCompleted(t *testing.T) {
 	statusPath := filepath.Join(tmpDir, "agent-info.json")
 	h := &StatusHandler{StatusPath: statusPath}
 
-	// Set LIMITS_EXCEEDED
-	err := h.UpdateStatus(hooks.StateLimitsExceeded)
+	// Set limits_exceeded
+	err := h.UpdateActivity(state.ActivityLimitsExceeded, "")
 	require.NoError(t, err)
 
-	// Attempt to set COMPLETED via a non-new-work path (model-end maps to IDLE, not COMPLETED,
-	// but UpdateStatus directly can be called by other code)
-	// The key test: tool-end/agent-end should not overwrite LIMITS_EXCEEDED
+	// tool-end/agent-end should not overwrite limits_exceeded
 	err = h.Handle(&hooks.Event{Name: hooks.EventModelEnd})
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "LIMITS_EXCEEDED", info.Status, "LIMITS_EXCEEDED should not be cleared by model-end")
+	assert.Equal(t, "limits_exceeded", info.Activity, "limits_exceeded should not be cleared by model-end")
 }
 
 func TestStatusHandler_LimitsExceededClearedByNewWork(t *testing.T) {
@@ -612,8 +672,8 @@ func TestStatusHandler_LimitsExceededClearedByNewWork(t *testing.T) {
 			statusPath := filepath.Join(tmpDir, "agent-info.json")
 			h := &StatusHandler{StatusPath: statusPath}
 
-			// Pre-set status to LIMITS_EXCEEDED
-			err := h.UpdateStatus(hooks.StateLimitsExceeded)
+			// Pre-set activity to limits_exceeded
+			err := h.UpdateActivity(state.ActivityLimitsExceeded, "")
 			require.NoError(t, err)
 
 			// Handle the new-work event
@@ -621,7 +681,7 @@ func TestStatusHandler_LimitsExceededClearedByNewWork(t *testing.T) {
 			require.NoError(t, err)
 
 			info := readAgentInfo(t, statusPath)
-			assert.NotEqual(t, "LIMITS_EXCEEDED", info.Status, "LIMITS_EXCEEDED should be cleared by new work event")
+			assert.NotEqual(t, "limits_exceeded", info.Activity, "limits_exceeded should be cleared by new work event")
 		})
 	}
 }
@@ -639,12 +699,15 @@ func TestStatusHandler_NotificationSetsWaitingForInput(t *testing.T) {
 	require.NoError(t, err)
 
 	info := readAgentInfo(t, statusPath)
-	assert.Equal(t, "WAITING_FOR_INPUT", info.Status, "notification should set WAITING_FOR_INPUT")
+	assert.Equal(t, "waiting_for_input", info.Activity, "notification should set waiting_for_input")
 }
 
-// agentInfoFields is a test-only struct for reading status fields from agent-info.json.
+// agentInfoFields is a test-only struct for reading fields from agent-info.json.
 type agentInfoFields struct {
-	Status string `json:"status,omitempty"`
+	Phase    string `json:"phase,omitempty"`
+	Activity string `json:"activity,omitempty"`
+	ToolName string `json:"toolName,omitempty"`
+	Status   string `json:"status,omitempty"`
 }
 
 // readAgentInfo is a test helper that reads and parses agent-info.json.

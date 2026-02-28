@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks/dialects"
 	"github.com/ptone/scion-agent/pkg/sciontool/hooks/handlers"
@@ -235,14 +236,14 @@ func runAskUser(message string) {
 	loggingHandler := handlers.NewLoggingHandler()
 	hubHandler := handlers.NewHubHandler()
 
-	// Update status to waiting for input (sticky)
-	if err := statusHandler.UpdateStatus(hooks.StateWaitingForInput); err != nil {
+	// Update activity to waiting_for_input (sticky)
+	if err := statusHandler.UpdateActivity(state.ActivityWaitingForInput, ""); err != nil {
 		log.Error("Failed to update status: %v", err)
 	}
 
 	// Log the event
 	logMessage := fmt.Sprintf("Agent requested input: %s", message)
-	if err := loggingHandler.LogEvent(hooks.StateWaitingForInput, logMessage); err != nil {
+	if err := loggingHandler.LogEvent(string(state.ActivityWaitingForInput), logMessage); err != nil {
 		log.Error("Failed to log event: %v", err)
 	}
 
@@ -262,14 +263,14 @@ func runTaskCompleted(message string) {
 	loggingHandler := handlers.NewLoggingHandler()
 	hubHandler := handlers.NewHubHandler()
 
-	// Update status to completed (sticky)
-	if err := statusHandler.UpdateStatus(hooks.StateCompleted); err != nil {
+	// Update activity to completed (sticky)
+	if err := statusHandler.UpdateActivity(state.ActivityCompleted, ""); err != nil {
 		log.Error("Failed to update status: %v", err)
 	}
 
 	// Log the event
 	logMessage := fmt.Sprintf("Agent completed task: %s", message)
-	if err := loggingHandler.LogEvent(hooks.StateCompleted, logMessage); err != nil {
+	if err := loggingHandler.LogEvent(string(state.ActivityCompleted), logMessage); err != nil {
 		log.Error("Failed to log event: %v", err)
 	}
 

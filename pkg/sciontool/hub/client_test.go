@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	state "github.com/ptone/scion-agent/pkg/agent/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,13 +168,17 @@ func TestClient_UpdateStatus(t *testing.T) {
 	client := NewClientWithConfig(server.URL, "test-token", "agent-123")
 
 	err := client.UpdateStatus(context.Background(), StatusUpdate{
-		Status:  StatusRunning,
-		Message: "test message",
+		Phase:    state.PhaseRunning,
+		Activity: state.ActivityIdle,
+		Status:   "idle",
+		Message:  "test message",
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-token", receivedToken)
-	assert.Equal(t, StatusRunning, receivedStatus.Status)
+	assert.Equal(t, state.PhaseRunning, receivedStatus.Phase)
+	assert.Equal(t, state.ActivityIdle, receivedStatus.Activity)
+	assert.Equal(t, "idle", receivedStatus.Status)
 	assert.Equal(t, "test message", receivedStatus.Message)
 }
 
@@ -206,7 +211,37 @@ func TestClient_UpdateStatus_Errors(t *testing.T) {
 	})
 }
 
-func TestClient_ConvenienceMethods(t *testing.T) {
+func TestClient_ReportState(t *testing.T) {
+	var lastPayload map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&lastPayload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClientWithConfig(server.URL, "test-token", "agent-123")
+	ctx := context.Background()
+
+	t.Run("running/idle", func(t *testing.T) {
+		err := client.ReportState(ctx, state.PhaseRunning, state.ActivityIdle, "ready")
+		require.NoError(t, err)
+		assert.Equal(t, "running", lastPayload["phase"])
+		assert.Equal(t, "idle", lastPayload["activity"])
+		assert.Equal(t, "idle", lastPayload["status"])
+		assert.Equal(t, "ready", lastPayload["message"])
+	})
+
+	t.Run("stopped", func(t *testing.T) {
+		err := client.ReportState(ctx, state.PhaseStopped, "", "session ended")
+		require.NoError(t, err)
+		assert.Equal(t, "stopped", lastPayload["phase"])
+		assert.Equal(t, "stopped", lastPayload["status"])
+		assert.Equal(t, "session ended", lastPayload["message"])
+	})
+}
+
+func TestClient_Heartbeat(t *testing.T) {
 	var lastStatus StatusUpdate
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,74 +253,11 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	client := NewClientWithConfig(server.URL, "test-token", "agent-123")
 	ctx := context.Background()
 
-	t.Run("Heartbeat", func(t *testing.T) {
-		err := client.Heartbeat(ctx)
-		require.NoError(t, err)
-		// Heartbeat should not set a status (empty string), only the heartbeat flag
-		// This prevents heartbeats from overwriting the actual agent status
-		assert.Equal(t, AgentStatus(""), lastStatus.Status)
-		assert.True(t, lastStatus.Heartbeat)
-	})
-
-	t.Run("ReportRunning", func(t *testing.T) {
-		err := client.ReportRunning(ctx, "running now")
-		require.NoError(t, err)
-		assert.Equal(t, StatusRunning, lastStatus.Status)
-		assert.Equal(t, "running now", lastStatus.Message)
-	})
-
-	t.Run("ReportCloning", func(t *testing.T) {
-		metadata := map[string]string{
-			"repository": "github.com/org/repo",
-			"branch":     "main",
-		}
-		err := client.ReportCloning(ctx, "Cloning repository", metadata)
-		require.NoError(t, err)
-		assert.Equal(t, StatusCloning, lastStatus.Status)
-		assert.Equal(t, "Cloning repository", lastStatus.Message)
-		assert.Equal(t, "github.com/org/repo", lastStatus.Metadata["repository"])
-		assert.Equal(t, "main", lastStatus.Metadata["branch"])
-	})
-
-	t.Run("ReportBusy", func(t *testing.T) {
-		err := client.ReportBusy(ctx, "processing")
-		require.NoError(t, err)
-		assert.Equal(t, StatusBusy, lastStatus.Status)
-		assert.Equal(t, "processing", lastStatus.Message)
-	})
-
-	t.Run("ReportIdle", func(t *testing.T) {
-		err := client.ReportIdle(ctx, "waiting")
-		require.NoError(t, err)
-		assert.Equal(t, StatusIdle, lastStatus.Status)
-		assert.Equal(t, "waiting", lastStatus.Message)
-	})
-
-	t.Run("ReportError", func(t *testing.T) {
-		err := client.ReportError(ctx, "something went wrong")
-		require.NoError(t, err)
-		assert.Equal(t, StatusError, lastStatus.Status)
-	})
-
-	t.Run("ReportShuttingDown", func(t *testing.T) {
-		err := client.ReportShuttingDown(ctx, "shutting down")
-		require.NoError(t, err)
-		assert.Equal(t, StatusShuttingDown, lastStatus.Status)
-	})
-
-	t.Run("ReportStopped", func(t *testing.T) {
-		err := client.ReportStopped(ctx, "agent stopped")
-		require.NoError(t, err)
-		assert.Equal(t, StatusStopped, lastStatus.Status)
-		assert.Equal(t, "agent stopped", lastStatus.Message)
-	})
-
-	t.Run("ReportTaskCompleted", func(t *testing.T) {
-		err := client.ReportTaskCompleted(ctx, "implemented feature")
-		require.NoError(t, err)
-		assert.Equal(t, StatusCompleted, lastStatus.Status)
-		assert.Equal(t, "implemented feature", lastStatus.TaskSummary)
-	})
+	err := client.Heartbeat(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, state.Phase(""), lastStatus.Phase)
+	assert.Equal(t, state.Activity(""), lastStatus.Activity)
+	assert.True(t, lastStatus.Heartbeat)
 }
 
 func TestIsHostedMode(t *testing.T) {
@@ -336,7 +308,10 @@ func TestClient_RetryLogic(t *testing.T) {
 		client.retryBaseDelay = 10 * time.Millisecond
 		client.retryMaxDelay = 50 * time.Millisecond
 
-		err := client.UpdateStatus(context.Background(), StatusUpdate{Status: StatusRunning})
+		err := client.UpdateStatus(context.Background(), StatusUpdate{
+			Activity: state.ActivityIdle,
+			Status:   "idle",
+		})
 		require.NoError(t, err)
 		assert.Equal(t, 3, attempts, "should have retried until success")
 	})
@@ -353,7 +328,10 @@ func TestClient_RetryLogic(t *testing.T) {
 		client := NewClientWithConfig(server.URL, "test-token", "agent-123")
 		client.retryBaseDelay = 10 * time.Millisecond
 
-		err := client.UpdateStatus(context.Background(), StatusUpdate{Status: StatusRunning})
+		err := client.UpdateStatus(context.Background(), StatusUpdate{
+			Activity: state.ActivityIdle,
+			Status:   "idle",
+		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "400")
 		assert.Equal(t, 1, attempts, "should not retry on 4xx errors")
@@ -372,7 +350,10 @@ func TestClient_RetryLogic(t *testing.T) {
 		client.maxRetries = 2
 		client.retryBaseDelay = 10 * time.Millisecond
 
-		err := client.UpdateStatus(context.Background(), StatusUpdate{Status: StatusRunning})
+		err := client.UpdateStatus(context.Background(), StatusUpdate{
+			Activity: state.ActivityIdle,
+			Status:   "idle",
+		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "3 attempts")
 		assert.Equal(t, 3, attempts, "should have attempted 1 + 2 retries")
@@ -393,7 +374,10 @@ func TestClient_RetryLogic(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 		defer cancel()
 
-		err := client.UpdateStatus(ctx, StatusUpdate{Status: StatusRunning})
+		err := client.UpdateStatus(ctx, StatusUpdate{
+			Activity: state.ActivityIdle,
+			Status:   "idle",
+		})
 		require.Error(t, err)
 		assert.True(t, attempts < 5, "should have stopped early due to context timeout")
 	})

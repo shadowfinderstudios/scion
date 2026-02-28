@@ -42,7 +42,9 @@ func TestProcessHookData_Claude(t *testing.T) {
 	var status map[string]interface{}
 	err = json.Unmarshal(statusData, &status)
 	require.NoError(t, err)
-	assert.Equal(t, "EXECUTING", status["status"])
+	assert.Equal(t, "executing", status["activity"])
+	assert.Equal(t, "executing", status["status"]) // backward compat
+	assert.Equal(t, "Bash", status["toolName"])
 
 	// Verify log file was created
 	logPath := filepath.Join(tmpDir, "agent.log")
@@ -77,7 +79,8 @@ func TestProcessHookData_Gemini(t *testing.T) {
 	var status map[string]interface{}
 	err = json.Unmarshal(statusData, &status)
 	require.NoError(t, err)
-	assert.Equal(t, "THINKING", status["status"])
+	assert.Equal(t, "thinking", status["activity"])
+	assert.Equal(t, "thinking", status["status"]) // backward compat
 }
 
 func TestProcessHookData_SessionEvents(t *testing.T) {
@@ -103,7 +106,8 @@ func TestProcessHookData_SessionEvents(t *testing.T) {
 	statusData, _ := os.ReadFile(statusPath)
 	var status map[string]interface{}
 	json.Unmarshal(statusData, &status)
-	assert.Equal(t, "STARTING", status["status"])
+	assert.Equal(t, "idle", status["activity"]) // session-start sets idle activity
+	assert.Equal(t, "idle", status["status"])    // backward compat: running+idle -> "idle"
 
 	// Test SessionEnd
 	data = map[string]interface{}{
@@ -117,5 +121,6 @@ func TestProcessHookData_SessionEvents(t *testing.T) {
 
 	statusData, _ = os.ReadFile(statusPath)
 	json.Unmarshal(statusData, &status)
-	assert.Equal(t, "EXITED", status["status"])
+	assert.Equal(t, "stopped", status["phase"])  // session-end sets stopped phase
+	assert.Equal(t, "stopped", status["status"]) // backward compat
 }
