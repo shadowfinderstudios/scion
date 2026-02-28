@@ -28,17 +28,20 @@ import (
 )
 
 var (
-	lookPlain bool
-	lookFull  bool
+	lookPlain    bool
+	lookFull     bool
+	lookNumLines int
 )
 
 // buildLookCmd builds the shell command for tmux capture-pane based on flags.
-func buildLookCmd(plain, full bool) []string {
+func buildLookCmd(plain, full bool, numLines int) []string {
 	captureArgs := "-p"
 	if !plain {
 		captureArgs += "e"
 	}
-	if full {
+	if numLines > 0 {
+		captureArgs += fmt.Sprintf("S -%d", numLines)
+	} else if full {
 		captureArgs += "S -"
 	}
 
@@ -58,7 +61,7 @@ var lookCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		agentName := args[0]
 
-		execCmd := buildLookCmd(lookPlain, lookFull)
+		execCmd := buildLookCmd(lookPlain, lookFull, lookNumLines)
 
 		// Check if Hub is enabled
 		hubCtx, err := CheckHubAvailabilityForAgent(grovePath, agentName, false)
@@ -137,5 +140,7 @@ func lookViaHub(hubCtx *HubContext, agentName string, execCmd []string) error {
 func init() {
 	lookCmd.Flags().BoolVar(&lookPlain, "plain", false, "Strip ANSI escape sequences from output")
 	lookCmd.Flags().BoolVar(&lookFull, "full", false, "Capture the full scrollback history")
+	lookCmd.Flags().IntVarP(&lookNumLines, "num-lines", "n", 0, "Number of scrollback lines to capture (tail)")
+	lookCmd.MarkFlagsMutuallyExclusive("full", "num-lines")
 	rootCmd.AddCommand(lookCmd)
 }

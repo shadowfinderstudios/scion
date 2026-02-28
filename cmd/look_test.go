@@ -27,37 +27,63 @@ func TestBuildLookCmd(t *testing.T) {
 		name     string
 		plain    bool
 		full     bool
+		numLines int
 		wantArgs string
 	}{
 		{
 			name:     "default flags",
 			plain:    false,
 			full:     false,
+			numLines: 0,
 			wantArgs: "capture-pane -pe -t scion",
 		},
 		{
 			name:     "plain only",
 			plain:    true,
 			full:     false,
+			numLines: 0,
 			wantArgs: "capture-pane -p -t scion",
 		},
 		{
 			name:     "full only",
 			plain:    false,
 			full:     true,
+			numLines: 0,
 			wantArgs: "capture-pane -peS - -t scion",
 		},
 		{
 			name:     "plain and full",
 			plain:    true,
 			full:     true,
+			numLines: 0,
 			wantArgs: "capture-pane -pS - -t scion",
+		},
+		{
+			name:     "num-lines",
+			plain:    false,
+			full:     false,
+			numLines: 75,
+			wantArgs: "capture-pane -peS -75 -t scion",
+		},
+		{
+			name:     "num-lines with plain",
+			plain:    true,
+			full:     false,
+			numLines: 100,
+			wantArgs: "capture-pane -pS -100 -t scion",
+		},
+		{
+			name:     "num-lines overrides full",
+			plain:    false,
+			full:     true,
+			numLines: 50,
+			wantArgs: "capture-pane -peS -50 -t scion",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := buildLookCmd(tt.plain, tt.full)
+			cmd := buildLookCmd(tt.plain, tt.full, tt.numLines)
 
 			assert.Equal(t, "/bin/sh", cmd[0])
 			assert.Equal(t, "-c", cmd[1])
