@@ -213,12 +213,13 @@ type CreateAgentResponse struct {
 
 // EnvGatherResponse contains env requirements relayed from the broker.
 type EnvGatherResponse struct {
-	AgentID    string                  `json:"agentId"`
-	Required   []string                `json:"required"`
-	HubHas     []EnvSource             `json:"hubHas"`
-	BrokerHas  []string                `json:"brokerHas"`
-	Needs      []string                `json:"needs"`
-	SecretInfo map[string]SecretKeyInfo `json:"secretInfo,omitempty"`
+	AgentID     string                  `json:"agentId"`
+	Required    []string                `json:"required"`
+	HubHas      []EnvSource             `json:"hubHas"`
+	BrokerHas   []string                `json:"brokerHas"`
+	Needs       []string                `json:"needs"`
+	SecretInfo  map[string]SecretKeyInfo `json:"secretInfo,omitempty"`
+	HubWarnings []string                `json:"hubWarnings,omitempty"`
 }
 
 // EnvSource tracks which scope provided an env var key.
@@ -766,6 +767,49 @@ func (s *Server) buildEnvGatherResponse(ctx context.Context, agent *store.Agent,
 				Description: v.Description,
 				Source:      v.Source,
 				Type:        v.Type,
+			}
+		}
+	}
+
+	// Cross-check: for each key the broker says it "needs", check whether the
+	// Hub actually has it in storage (env_vars table or secret backend).  If
+	// found, this indicates a resolution mismatch — the dispatch should have
+	// included it but didn't.
+	for _, key := range brokerReqs.Needs {
+		// Check env_vars table
+		if agent.OwnerID != "" {
+			vars, err := s.store.ListEnvVars(ctx, store.EnvVarFilter{Scope: "user", ScopeID: agent.OwnerID, Key: key})
+			if err == nil && len(vars) > 0 {
+				resp.HubWarnings = append(resp.HubWarnings,
+					fmt.Sprintf("%s is stored in Hub env storage (user scope) but was not included in the dispatch — this may indicate a resolution issue", key))
+				continue
+			}
+		}
+		if agent.GroveID != "" {
+			vars, err := s.store.ListEnvVars(ctx, store.EnvVarFilter{Scope: "grove", ScopeID: agent.GroveID, Key: key})
+			if err == nil && len(vars) > 0 {
+				resp.HubWarnings = append(resp.HubWarnings,
+					fmt.Sprintf("%s is stored in Hub env storage (grove scope) but was not included in the dispatch — this may indicate a resolution issue", key))
+				continue
+			}
+		}
+		// Check secret backend
+		if s.secretBackend != nil {
+			if agent.OwnerID != "" {
+				metas, err := s.secretBackend.List(ctx, secret.Filter{Scope: "user", ScopeID: agent.OwnerID, Name: key})
+				if err == nil && len(metas) > 0 {
+					resp.HubWarnings = append(resp.HubWarnings,
+						fmt.Sprintf("%s is stored in Hub secrets (user scope) but was not included in the dispatch — this may indicate a resolution issue", key))
+					continue
+				}
+			}
+			if agent.GroveID != "" {
+				metas, err := s.secretBackend.List(ctx, secret.Filter{Scope: "grove", ScopeID: agent.GroveID, Name: key})
+				if err == nil && len(metas) > 0 {
+					resp.HubWarnings = append(resp.HubWarnings,
+						fmt.Sprintf("%s is stored in Hub secrets (grove scope) but was not included in the dispatch — this may indicate a resolution issue", key))
+					continue
+				}
 			}
 		}
 	}

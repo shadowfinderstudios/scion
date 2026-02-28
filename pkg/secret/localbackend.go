@@ -40,8 +40,18 @@ func (b *LocalBackend) Get(ctx context.Context, name, scope, scopeID string) (*S
 	return fromStoreSecretWithValue(s), nil
 }
 
-func (b *LocalBackend) Set(_ context.Context, _ *SetSecretInput) (bool, *SecretMeta, error) {
-	return false, nil, ErrNoSecretBackend
+func (b *LocalBackend) Set(ctx context.Context, input *SetSecretInput) (bool, *SecretMeta, error) {
+	s := toStoreSecret(input)
+	created, err := b.store.UpsertSecret(ctx, s)
+	if err != nil {
+		return false, nil, err
+	}
+	// Re-read the stored secret to get server-assigned fields (version, timestamps).
+	stored, err := b.store.GetSecret(ctx, input.Name, input.Scope, input.ScopeID)
+	if err != nil {
+		return created, nil, err
+	}
+	return created, fromStoreSecretMeta(stored), nil
 }
 
 func (b *LocalBackend) Delete(ctx context.Context, name, scope, scopeID string) error {

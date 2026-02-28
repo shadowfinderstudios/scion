@@ -880,10 +880,19 @@ func (d *HTTPAgentDispatcher) resolveEnvFromStorage(ctx context.Context, agent *
 				slog.Warn("Failed to list grove env vars", "error", err)
 			}
 		} else {
+			if d.debug {
+				keys := make([]string, 0, len(vars))
+				for _, v := range vars {
+					keys = append(keys, v.Key)
+				}
+				slog.Debug("resolveEnvFromStorage: grove scope", "groveID", agent.GroveID, "count", len(vars), "keys", keys)
+			}
 			for _, v := range vars {
 				result[v.Key] = v.Value
 			}
 		}
+	} else if d.debug {
+		slog.Debug("resolveEnvFromStorage: skipping grove scope (empty groveID)")
 	}
 
 	// Query user-scoped env vars (higher precedence)
@@ -894,10 +903,19 @@ func (d *HTTPAgentDispatcher) resolveEnvFromStorage(ctx context.Context, agent *
 				slog.Warn("Failed to list user env vars", "error", err)
 			}
 		} else {
+			if d.debug {
+				keys := make([]string, 0, len(vars))
+				for _, v := range vars {
+					keys = append(keys, v.Key)
+				}
+				slog.Debug("resolveEnvFromStorage: user scope", "ownerID", agent.OwnerID, "count", len(vars), "keys", keys)
+			}
 			for _, v := range vars {
 				result[v.Key] = v.Value
 			}
 		}
+	} else if d.debug {
+		slog.Debug("resolveEnvFromStorage: skipping user scope (empty ownerID)")
 	}
 
 	// Query runtime_broker-scoped env vars (if applicable)
@@ -908,10 +926,19 @@ func (d *HTTPAgentDispatcher) resolveEnvFromStorage(ctx context.Context, agent *
 				slog.Warn("Failed to list broker env vars", "error", err)
 			}
 		} else {
+			if d.debug {
+				keys := make([]string, 0, len(vars))
+				for _, v := range vars {
+					keys = append(keys, v.Key)
+				}
+				slog.Debug("resolveEnvFromStorage: broker scope", "brokerID", agent.RuntimeBrokerID, "count", len(vars), "keys", keys)
+			}
 			for _, v := range vars {
 				result[v.Key] = v.Value
 			}
 		}
+	} else if d.debug {
+		slog.Debug("resolveEnvFromStorage: skipping broker scope (empty brokerID)")
 	}
 
 	return result, nil
@@ -1164,7 +1191,17 @@ func (d *HTTPAgentDispatcher) DispatchCheckAgentPrompt(ctx context.Context, agen
 // into a flat list. Higher scopes override lower: user < grove < runtime_broker.
 func (d *HTTPAgentDispatcher) resolveSecrets(ctx context.Context, agent *store.Agent) ([]ResolvedSecret, error) {
 	if d.secretBackend == nil {
+		if d.debug {
+			slog.Debug("resolveSecrets: secretBackend is nil, skipping secret resolution")
+		}
 		return nil, nil
+	}
+	if d.debug {
+		slog.Debug("resolveSecrets: querying secret backend",
+			"ownerID", agent.OwnerID,
+			"groveID", agent.GroveID,
+			"brokerID", agent.RuntimeBrokerID,
+		)
 	}
 	resolved, err := d.secretBackend.Resolve(ctx, agent.OwnerID, agent.GroveID, agent.RuntimeBrokerID)
 	if err != nil {
@@ -1180,6 +1217,13 @@ func (d *HTTPAgentDispatcher) resolveSecrets(ctx context.Context, agent *store.A
 			Source: sv.Scope,
 			Ref:    sv.SecretRef,
 		}
+	}
+	if d.debug {
+		names := make([]string, len(result))
+		for i, r := range result {
+			names[i] = r.Name
+		}
+		slog.Debug("resolveSecrets: resolved secrets", "count", len(result), "names", names)
 	}
 	return result, nil
 }

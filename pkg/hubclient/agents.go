@@ -157,12 +157,13 @@ type SecretKeyInfo struct {
 }
 
 type EnvGatherResponse struct {
-	AgentID    string                  `json:"agentId"`
-	Required   []string                `json:"required"`
-	HubHas     []EnvSource             `json:"hubHas"`
-	BrokerHas  []string                `json:"brokerHas"`
-	Needs      []string                `json:"needs"`
-	SecretInfo map[string]SecretKeyInfo `json:"secretInfo,omitempty"`
+	AgentID     string                  `json:"agentId"`
+	Required    []string                `json:"required"`
+	HubHas      []EnvSource             `json:"hubHas"`
+	BrokerHas   []string                `json:"brokerHas"`
+	Needs       []string                `json:"needs"`
+	SecretInfo  map[string]SecretKeyInfo `json:"secretInfo,omitempty"`
+	HubWarnings []string                `json:"hubWarnings,omitempty"`
 }
 
 // EnvSource tracks which scope provided an env var key.

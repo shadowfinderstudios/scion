@@ -18,7 +18,6 @@ package secret
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/ptone/scion-agent/pkg/store"
@@ -51,7 +50,7 @@ func seedSecret(t *testing.T, s store.SecretStore, sec *store.Secret) {
 	}
 }
 
-func TestLocalBackend_SetRejectsPlaintext(t *testing.T) {
+func TestLocalBackend_Set(t *testing.T) {
 	backend, _ := createTestBackend(t)
 	ctx := context.Background()
 
@@ -63,12 +62,109 @@ func TestLocalBackend_SetRejectsPlaintext(t *testing.T) {
 		ScopeID:    "user-1",
 	}
 
-	_, _, err := backend.Set(ctx, input)
-	if err == nil {
-		t.Fatal("expected Set to return error on local backend")
+	created, meta, err := backend.Set(ctx, input)
+	if err != nil {
+		t.Fatalf("Set failed: %v", err)
 	}
-	if !errors.Is(err, ErrNoSecretBackend) {
-		t.Errorf("expected ErrNoSecretBackend, got %v", err)
+	if !created {
+		t.Error("expected created=true for new secret")
+	}
+	if meta == nil {
+		t.Fatal("expected non-nil meta")
+	}
+	if meta.Name != "API_KEY" {
+		t.Errorf("expected name %q, got %q", "API_KEY", meta.Name)
+	}
+	if meta.SecretType != TypeEnvironment {
+		t.Errorf("expected type %q, got %q", TypeEnvironment, meta.SecretType)
+	}
+
+	// Verify the value was stored by reading it back
+	sv, err := backend.Get(ctx, "API_KEY", ScopeUser, "user-1")
+	if err != nil {
+		t.Fatalf("Get after Set failed: %v", err)
+	}
+	if sv.Value != "sk-test-123" {
+		t.Errorf("expected value %q, got %q", "sk-test-123", sv.Value)
+	}
+
+	// Update the same secret
+	input.Value = "sk-updated-456"
+	created, meta, err = backend.Set(ctx, input)
+	if err != nil {
+		t.Fatalf("Set (update) failed: %v", err)
+	}
+	if created {
+		t.Error("expected created=false for update")
+	}
+
+	// Verify updated value
+	sv, err = backend.Get(ctx, "API_KEY", ScopeUser, "user-1")
+	if err != nil {
+		t.Fatalf("Get after update failed: %v", err)
+	}
+	if sv.Value != "sk-updated-456" {
+		t.Errorf("expected updated value %q, got %q", "sk-updated-456", sv.Value)
+	}
+}
+
+func TestLocalBackend_SetAndResolveRoundTrip(t *testing.T) {
+	backend, _ := createTestBackend(t)
+	ctx := context.Background()
+
+	// Set a secret via Set()
+	_, _, err := backend.Set(ctx, &SetSecretInput{
+		Name:       "GEMINI_API_KEY",
+		Value:      "gemini-key-value",
+		SecretType: TypeEnvironment,
+		Scope:      ScopeUser,
+		ScopeID:    "user-1",
+	})
+	if err != nil {
+		t.Fatalf("Set failed: %v", err)
+	}
+
+	// Resolve should find it
+	resolved, err := backend.Resolve(ctx, "user-1", "", "")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved secret, got %d", len(resolved))
+	}
+	if resolved[0].Name != "GEMINI_API_KEY" {
+		t.Errorf("expected name %q, got %q", "GEMINI_API_KEY", resolved[0].Name)
+	}
+	if resolved[0].Value != "gemini-key-value" {
+		t.Errorf("expected value %q, got %q", "gemini-key-value", resolved[0].Value)
+	}
+}
+
+func TestLocalBackend_SetUpdateIncrementsVersion(t *testing.T) {
+	backend, _ := createTestBackend(t)
+	ctx := context.Background()
+
+	input := &SetSecretInput{
+		Name:       "VERSION_KEY",
+		Value:      "v1",
+		SecretType: TypeEnvironment,
+		Scope:      ScopeUser,
+		ScopeID:    "user-1",
+	}
+
+	_, meta1, err := backend.Set(ctx, input)
+	if err != nil {
+		t.Fatalf("Set (create) failed: %v", err)
+	}
+
+	input.Value = "v2"
+	_, meta2, err := backend.Set(ctx, input)
+	if err != nil {
+		t.Fatalf("Set (update) failed: %v", err)
+	}
+
+	if meta2.Version <= meta1.Version {
+		t.Errorf("expected version to increment: v1=%d, v2=%d", meta1.Version, meta2.Version)
 	}
 }
 

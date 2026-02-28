@@ -520,15 +520,14 @@ func TestSecret_UserScope_WriteAuthWorks(t *testing.T) {
 	srv.SetSecretBackend(secret.NewLocalBackend(s))
 
 	// Verify that an authenticated user passes auth checks for secret writes.
-	// The LocalBackend doesn't support Set, so expect 501 (not 401/403).
+	// The LocalBackend supports Set (stores plaintext in SQLite), so expect 200.
 	body := SetSecretRequest{
 		Value:       "super-secret",
 		Description: "A test secret",
 	}
 	rec := doRequest(t, srv, http.MethodPut, "/api/v1/secrets/MY_SECRET?scope=user", body)
-	// LocalBackend.Set returns ErrNoSecretBackend → 501
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 (backend not configured for writes), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for local secret write, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// Verify unauthenticated is rejected before reaching the backend
@@ -730,18 +729,18 @@ func TestEnvVar_SecretPromotion_NoBackend_Returns501(t *testing.T) {
 	}
 }
 
-func TestEnvVar_SecretPromotion_LocalBackend_Returns501(t *testing.T) {
+func TestEnvVar_SecretPromotion_LocalBackend_Succeeds(t *testing.T) {
 	srv, s := testServer(t)
 	srv.SetSecretBackend(secret.NewLocalBackend(s))
 
-	// LocalBackend.Set() returns ErrNoSecretBackend → should map to 501
+	// LocalBackend.Set() now works — promotion should succeed with 200
 	body := SetEnvVarRequest{
 		Value:  "super-secret",
 		Secret: true,
 	}
 	rec := doRequest(t, srv, http.MethodPut, "/api/v1/env/MY_SECRET_VAR?scope=user", body)
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 from LocalBackend, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for local secret promotion, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -946,17 +945,18 @@ func TestEnvVar_StaleCleanup_PlainEnvVarRemovedOnPromotion(t *testing.T) {
 		t.Fatalf("expected env var in store, got error: %v", err)
 	}
 
-	// Try to promote to secret — LocalBackend.Set returns 501, so promotion fails
+	// Promote to secret — LocalBackend.Set now succeeds, and the handler
+	// cleans up the stale plain env var (line 4184 in handlers.go).
 	secretBody := SetEnvVarRequest{Value: "secret-val", Secret: true}
 	rec2 := doRequest(t, srv, http.MethodPut, "/api/v1/env/UPGRADE_ME?scope=user", secretBody)
-	if rec2.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 from LocalBackend promotion, got %d: %s", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 for local secret promotion, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 
-	// Plain env var should still exist (promotion failed, so no cleanup)
+	// Plain env var should be removed after successful promotion
 	_, err = s.GetEnvVar(ctx, "UPGRADE_ME", store.ScopeUser, "dev-user")
-	if err != nil {
-		t.Errorf("plain env var should still exist after failed promotion: %v", err)
+	if err != store.ErrNotFound {
+		t.Errorf("plain env var should be removed after promotion, got err: %v", err)
 	}
 }
 
@@ -994,7 +994,7 @@ func TestEnvVar_NonEnvironmentSecrets_NotMerged(t *testing.T) {
 	}
 }
 
-func TestEnvVar_GroveScope_SecretPromotion_Returns501(t *testing.T) {
+func TestEnvVar_GroveScope_SecretPromotion_Succeeds(t *testing.T) {
 	srv, s := testServer(t)
 	srv.SetSecretBackend(secret.NewLocalBackend(s))
 	ctx := context.Background()
@@ -1009,8 +1009,8 @@ func TestEnvVar_GroveScope_SecretPromotion_Returns501(t *testing.T) {
 
 	body := SetEnvVarRequest{Value: "secret-val", Secret: true}
 	rec := doRequest(t, srv, http.MethodPut, "/api/v1/groves/"+grove.ID+"/env/GROVE_SECRET", body)
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 for grove secret promotion with LocalBackend, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for grove secret promotion with LocalBackend, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

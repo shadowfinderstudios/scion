@@ -889,6 +889,13 @@ func gatherAndSubmitEnv(ctx context.Context, hubCtx *HubContext, groveID string,
 		agentID = resp.Agent.ID
 	}
 
+	// Display Hub warnings about resolution mismatches
+	if len(gather.HubWarnings) > 0 {
+		for _, w := range gather.HubWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
 	// Print summary of env status
 	if len(gather.HubHas) > 0 {
 		statusln("\nEnvironment variables already provided:")
