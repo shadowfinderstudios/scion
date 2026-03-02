@@ -336,6 +336,61 @@ func TestDisplayAgentsEmptyAll(t *testing.T) {
 	}
 }
 
+func TestDisplayAgentsFriendlyTemplateName(t *testing.T) {
+	agents := []api.AgentInfo{
+		{
+			Name:            "agent-cache-path",
+			Template:        "/home/user/.scion/templates/cache/abc123/claude",
+			Runtime:         "docker",
+			Grove:           "my-project",
+			Phase:           "running",
+			ContainerStatus: "Up 1 hour",
+		},
+		{
+			Name:            "agent-simple",
+			Template:        "gemini",
+			Runtime:         "docker",
+			Grove:           "my-project",
+			Phase:           "running",
+			ContainerStatus: "Up 2 hours",
+		},
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := displayAgents(agents, false, false)
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("displayAgents returned error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 lines, got %d: %s", len(lines), output)
+	}
+
+	// Cache path should be resolved to friendly name "claude"
+	if strings.Contains(lines[1], "/home/user") {
+		t.Errorf("agent row should NOT contain cache path, got: %s", lines[1])
+	}
+	if !strings.Contains(lines[1], "claude") {
+		t.Errorf("agent row should contain friendly template name 'claude': %s", lines[1])
+	}
+
+	// Simple name should pass through unchanged
+	if !strings.Contains(lines[2], "gemini") {
+		t.Errorf("agent row should contain template name 'gemini': %s", lines[2])
+	}
+}
+
 func TestHubAgentToAgentInfo_HarnessConfigFromTopLevel(t *testing.T) {
 	// When the Hub returns harnessConfig at the top level, use it directly
 	a := hubclient.Agent{

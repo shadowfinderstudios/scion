@@ -1223,3 +1223,29 @@ telemetry:
 		t.Errorf("expected no validation errors, got: %v", errors)
 	}
 }
+
+func TestFriendlyTemplateName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty", "", ""},
+		{"simple name", "claude", "claude"},
+		{"simple name with dash", "my-template", "my-template"},
+		{"absolute path", "/home/user/.scion/templates/cache/abc123", "abc123"},
+		{"cache path", "/tmp/.scion_cache/templates/my-template", "my-template"},
+		{"http URI", "https://example.com/my-template.tar.gz", "my-template"},
+		{"github URI", "https://github.com/user/repo/tree/main/templates/claude", "claude"},
+		{"rclone path", ":gcs:bucket/path/to/template", "template"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FriendlyTemplateName(tt.input)
+			if result != tt.expected {
+				t.Errorf("FriendlyTemplateName(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

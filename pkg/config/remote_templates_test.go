@@ -313,7 +313,7 @@ func TestDeriveTemplateName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := deriveTemplateName(tt.uri)
+			result := DeriveTemplateName(tt.uri)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

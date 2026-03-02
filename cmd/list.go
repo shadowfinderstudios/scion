@@ -247,6 +247,13 @@ func hubAgentToAgentInfo(a hubclient.Agent) api.AgentInfo {
 // displayAgents displays agents in the requested format
 // hubMode indicates if the listing is from Hub (shows BROKER column)
 func displayAgents(agents []api.AgentInfo, all bool, hubMode bool) error {
+	// Resolve human-friendly template names from raw values that may
+	// contain cache paths or remote URIs (mirrors the 813307c fix for
+	// the tmux footer).
+	for i := range agents {
+		agents[i].Template = config.FriendlyTemplateName(agents[i].Template)
+	}
+
 	if sortByTime {
 		sort.Slice(agents, func(i, j int) bool {
 			return agents[i].LastSeen.After(agents[j].LastSeen)

@@ -169,7 +169,7 @@ func FindTemplateWithContext(ctx context.Context, name string) (*Template, error
 		}
 
 		// Derive a short name from the URI for display purposes
-		shortName := deriveTemplateName(name)
+		shortName := DeriveTemplateName(name)
 
 		return &Template{Name: shortName, Path: cachedPath}, nil
 	}
@@ -235,8 +235,25 @@ func FindTemplateInScope(name, scope string) *Template {
 	return nil
 }
 
-// deriveTemplateName extracts a short template name from a URI for display purposes.
-func deriveTemplateName(uri string) string {
+// FriendlyTemplateName converts a raw template reference (cache path, URI, or
+// simple name) to a human-friendly short name suitable for display.
+// Simple names pass through unchanged; absolute paths return filepath.Base;
+// remote URIs are handled by DeriveTemplateName.
+func FriendlyTemplateName(ref string) string {
+	if ref == "" {
+		return ref
+	}
+	if IsRemoteURI(ref) {
+		return DeriveTemplateName(ref)
+	}
+	if filepath.IsAbs(ref) {
+		return filepath.Base(ref)
+	}
+	return ref
+}
+
+// DeriveTemplateName extracts a short template name from a URI for display purposes.
+func DeriveTemplateName(uri string) string {
 	// For GitHub URLs, extract the folder name
 	if parts, err := parseGitHubURL(uri); err == nil {
 		if parts.Path != "" {
