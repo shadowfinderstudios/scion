@@ -146,8 +146,11 @@ func buildCommonRunArgs(config RunConfig) ([]string, error) {
 		registerMount(config.HomeDir, util.GetHomeDir(config.UnixUsername), false, true)
 	}
 	if config.GitClone != nil {
-		// Git clone mode: no workspace volume mount.
-		// sciontool creates /workspace via git clone at startup.
+		// Git clone mode: mount the host-side workspace directory so the
+		// cloned repo is visible on the host for debugging and persistence.
+		if config.Workspace != "" {
+			registerMount(config.Workspace, "/workspace", false, true)
+		}
 		addArg("--workdir", "/workspace")
 	} else if config.RepoRoot != "" && config.Workspace != "" {
 		relWorkspace, err := filepath.Rel(config.RepoRoot, config.Workspace)

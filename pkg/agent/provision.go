@@ -193,9 +193,12 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 
 	// Workspace Resolution Logic
 	if gitClone != nil {
-		// Git clone mode: skip workspace creation entirely.
-		// sciontool will clone the repo inside the container.
-		agentWorkspace = ""
+		// Git clone mode: create the workspace directory on the host so it can
+		// be bind-mounted into the container. sciontool will clone the repo
+		// into this directory at container startup.
+		if err := os.MkdirAll(agentWorkspace, 0755); err != nil {
+			return "", "", nil, fmt.Errorf("failed to create workspace dir: %w", err)
+		}
 	} else if workspace != "" {
 		// Case 1: Explicit Workspace provided
 		// This overrides everything else. We mount this path directly.

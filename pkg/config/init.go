@@ -115,6 +115,7 @@ func SeedCommonFiles(templateDir, configDirName string, force bool) error {
 	}{
 		{filepath.Join(homeDir, ".tmux.conf"), readCommonEmbed(".tmux.conf"), 0644},
 		{filepath.Join(homeDir, ".zshrc"), readCommonEmbed("zshrc"), 0644},
+		{filepath.Join(homeDir, ".gitconfig"), readCommonEmbed(".gitconfig"), 0644},
 		{filepath.Join(homeDir, ".gemini", ".geminiignore"), readCommonEmbed(".geminiignore"), 0644},
 	}
 
@@ -162,6 +163,7 @@ func SeedCommonFilesToHome(homeDir string, force bool) error {
 	}{
 		{filepath.Join(homeDir, ".tmux.conf"), readCommonEmbed(".tmux.conf"), 0644},
 		{filepath.Join(homeDir, ".zshrc"), readCommonEmbed("zshrc"), 0644},
+		{filepath.Join(homeDir, ".gitconfig"), readCommonEmbed(".gitconfig"), 0644},
 		{filepath.Join(homeDir, ".gemini", ".geminiignore"), readCommonEmbed(".geminiignore"), 0644},
 	}
 

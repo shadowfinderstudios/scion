@@ -198,7 +198,7 @@ func runInit(args []string) int {
 	}
 
 	// Clone git workspace if configured (hub-first git groves)
-	if err := gitCloneWorkspace(); err != nil {
+	if err := gitCloneWorkspace(targetUID, targetGID); err != nil {
 		log.Error("Git clone failed: %v", err)
 		if hubClient := hub.NewClient(); hubClient != nil && hubClient.IsConfigured() {
 			hubCtx, hubCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -621,8 +621,10 @@ func mustAtoi(s string) int {
 
 // gitCloneWorkspace clones a git repository into /workspace when SCION_GIT_CLONE_URL
 // is set. This supports hub-first git groves where the repository must be cloned
-// before the harness starts. Returns nil if no clone URL is configured (non-git workspace).
-func gitCloneWorkspace() error {
+// before the harness starts. When uid > 0, all git commands run as the specified
+// user so that the resulting files are owned by the scion user rather than root.
+// Returns nil if no clone URL is configured (non-git workspace).
+func gitCloneWorkspace(uid, gid int) error {
 	cloneURL := os.Getenv("SCION_GIT_CLONE_URL")
 	if cloneURL == "" {
 		return nil
@@ -646,6 +648,18 @@ func gitCloneWorkspace() error {
 		depthStr = "1"
 	}
 	agentName := os.Getenv("SCION_AGENT_NAME")
+
+	// Helper to set credentials on a command so git runs as the scion user.
+	setCredential := func(cmd *exec.Cmd) {
+		if uid > 0 {
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Credential: &syscall.Credential{
+					Uid: uint32(uid),
+					Gid: uint32(gid),
+				},
+			}
+		}
+	}
 
 	// Report cloning status to Hub
 	normalizedURL := util.NormalizeGitRemote(cloneURL)
@@ -671,6 +685,7 @@ func gitCloneWorkspace() error {
 	// Run git clone
 	cloneArgs := []string{"clone", "--depth", depthStr, "--branch", branch, authURL, workspacePath}
 	cmd := exec.Command("git", cloneArgs...)
+	setCredential(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -687,20 +702,26 @@ func gitCloneWorkspace() error {
 		{"user.email", "agent@scion.dev"},
 	}
 	for _, cfg := range gitConfigs {
-		if err := exec.Command("git", "-C", workspacePath, "config", cfg.key, cfg.value).Run(); err != nil {
+		cfgCmd := exec.Command("git", "-C", workspacePath, "config", cfg.key, cfg.value)
+		setCredential(cfgCmd)
+		if err := cfgCmd.Run(); err != nil {
 			return fmt.Errorf("failed to set git config %s: %w", cfg.key, err)
 		}
 	}
 
 	// Configure credential helper for subsequent push operations
 	credentialHelper := `!f() { echo "password=${GITHUB_TOKEN}"; echo "username=oauth2"; }; f`
-	if err := exec.Command("git", "-C", workspacePath, "config", "credential.helper", credentialHelper).Run(); err != nil {
+	credCmd := exec.Command("git", "-C", workspacePath, "config", "credential.helper", credentialHelper)
+	setCredential(credCmd)
+	if err := credCmd.Run(); err != nil {
 		return fmt.Errorf("failed to configure git credential helper: %w", err)
 	}
 
 	// Create and checkout agent feature branch
 	branchName := "scion/" + agentName
-	if err := exec.Command("git", "-C", workspacePath, "checkout", "-b", branchName).Run(); err != nil {
+	checkoutCmd := exec.Command("git", "-C", workspacePath, "checkout", "-b", branchName)
+	setCredential(checkoutCmd)
+	if err := checkoutCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create branch %s: %w", branchName, err)
 	}
 

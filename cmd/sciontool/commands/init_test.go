@@ -116,7 +116,7 @@ func TestGitCloneWorkspace_NoCloneURL(t *testing.T) {
 		}
 	}()
 
-	err := gitCloneWorkspace()
+	err := gitCloneWorkspace(0, 0)
 	if err != nil {
 		t.Errorf("expected nil error when SCION_GIT_CLONE_URL is not set, got: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestGitCloneWorkspace_DefaultEnvValues(t *testing.T) {
 
 	// gitCloneWorkspace will fail at the git clone step, but we can verify
 	// the function doesn't panic and returns a meaningful error.
-	err := gitCloneWorkspace()
+	err := gitCloneWorkspace(0, 0)
 	if err == nil {
 		t.Fatal("expected error from git clone to nonexistent host")
 	}
