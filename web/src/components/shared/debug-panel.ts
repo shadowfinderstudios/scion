@@ -191,6 +191,12 @@ export class ScionDebugPanel extends LitElement {
       font-weight: 600;
     }
 
+    .panel-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
     .panel-header button {
       background: transparent;
       border: none;
@@ -536,6 +542,34 @@ export class ScionDebugPanel extends LitElement {
     return 'Disconnected';
   }
 
+  private exportDebugData(): void {
+    const scope = stateManager.currentScope;
+    const subjects = stateManager.currentSubjects;
+    const snap = stateManager.getStateSnapshot();
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      pageUrl: window.location.href,
+      connection: {
+        status: this.getConnectionStatus(),
+        connectionId: debugLog.connectionId,
+        reconnectAttempts: stateManager.sseClientInstance.reconnectAttemptCount,
+      },
+      scope: scope ?? null,
+      subscriptions: subjects,
+      state: snap,
+      eventLog: [...debugLog.log],
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `scion-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   private formatTime(ts: number): string {
     const d = new Date(ts);
     return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -571,7 +605,10 @@ export class ScionDebugPanel extends LitElement {
       <div class="panel ${this.expanded ? 'open' : ''}">
         <div class="panel-header">
           <h3>Debug Panel</h3>
-          <button @click=${() => this.togglePanel()}>X</button>
+          <div class="panel-header-actions">
+            <button class="action-button" @click=${() => this.exportDebugData()}>Export</button>
+            <button @click=${() => this.togglePanel()}>X</button>
+          </div>
         </div>
         <div class="panel-content">
           ${this.renderConnectionStatus()}
