@@ -52,6 +52,9 @@ export class ScionPageAgentCreate extends LitElement {
   @state()
   private notify = true;
 
+  /** Whether the groveId was explicitly passed via URL query param (user navigated from grove page) */
+  private groveFromUrl = false;
+
   static override styles = css`
     :host {
       display: block;
@@ -244,10 +247,17 @@ export class ScionPageAgentCreate extends LitElement {
       const groveParam = params.get('groveId');
       if (groveParam) {
         this.groveId = groveParam;
+        this.groveFromUrl = true;
       }
     }
 
     void this.loadFormData();
+  }
+
+  /** The grove matching the URL-provided groveId, used for back-navigation */
+  private get sourceGrove(): Grove | undefined {
+    if (!this.groveFromUrl) return undefined;
+    return this.groves.find((g) => g.id === this.groveId);
   }
 
   private async loadFormData(): Promise<void> {
@@ -440,9 +450,9 @@ export class ScionPageAgentCreate extends LitElement {
     }
 
     return html`
-      <a href="/agents" class="back-link">
+      <a href="${this.sourceGrove ? `/groves/${this.sourceGrove.id}` : '/agents'}" class="back-link">
         <sl-icon name="arrow-left"></sl-icon>
-        Back to Agents
+        ${this.sourceGrove ? `To ${this.sourceGrove.name}` : 'Back to Agents'}
       </a>
 
       <div class="page-header">
@@ -594,7 +604,7 @@ export class ScionPageAgentCreate extends LitElement {
               <sl-icon slot="prefix" name="play-circle"></sl-icon>
               Create &amp; Start Agent
             </sl-button>
-            <a href="/agents" style="text-decoration: none;">
+            <a href="${this.sourceGrove ? `/groves/${this.sourceGrove.id}` : '/agents'}" style="text-decoration: none;">
               <sl-button variant="default" ?disabled=${this.submitting}>
                 Cancel
               </sl-button>
