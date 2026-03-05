@@ -370,12 +370,12 @@ func TestRequiredAuthEnvKeys(t *testing.T) {
 		// Claude
 		{"claude api-key", "claude", "api-key", [][]string{{"ANTHROPIC_API_KEY"}}},
 		{"claude auth-file", "claude", "auth-file", nil},
-		{"claude vertex-ai", "claude", "vertex-ai", [][]string{{"GOOGLE_CLOUD_PROJECT"}, {"GOOGLE_CLOUD_REGION"}}},
+		{"claude vertex-ai", "claude", "vertex-ai", [][]string{{"GOOGLE_CLOUD_PROJECT"}, {"GOOGLE_CLOUD_REGION", "CLOUD_ML_REGION", "GOOGLE_CLOUD_LOCATION"}}},
 
 		// Gemini
 		{"gemini api-key", "gemini", "api-key", [][]string{{"GEMINI_API_KEY", "GOOGLE_API_KEY"}}},
 		{"gemini auth-file", "gemini", "auth-file", nil},
-		{"gemini vertex-ai", "gemini", "vertex-ai", [][]string{{"GOOGLE_CLOUD_PROJECT"}, {"GOOGLE_CLOUD_REGION"}}},
+		{"gemini vertex-ai", "gemini", "vertex-ai", [][]string{{"GOOGLE_CLOUD_PROJECT"}, {"GOOGLE_CLOUD_REGION", "CLOUD_ML_REGION", "GOOGLE_CLOUD_LOCATION"}}},
 
 		// OpenCode
 		{"opencode api-key", "opencode", "api-key", [][]string{{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}}},

@@ -139,8 +139,9 @@ func (g *GeminiCLI) Provision(ctx context.Context, agentName, agentHome, agentWo
 		// gcloud volume here — it would bypass the broker-mode check and
 		// leak the broker operator's credentials into agent containers.
 		envUpdates = map[string]string{
-			"GOOGLE_CLOUD_PROJECT": "${GOOGLE_CLOUD_PROJECT}",
-			"GOOGLE_CLOUD_REGION":  "${GOOGLE_CLOUD_REGION}",
+			"GOOGLE_CLOUD_PROJECT":  "${GOOGLE_CLOUD_PROJECT}",
+			"GOOGLE_CLOUD_REGION":   "${GOOGLE_CLOUD_REGION}",
+			"GOOGLE_CLOUD_LOCATION": "${GOOGLE_CLOUD_REGION}",
 		}
 	}
 
@@ -339,6 +340,7 @@ func (g *GeminiCLI) resolveExplicit(auth api.AuthConfig) (*api.ResolvedAuth, err
 		}
 		if auth.GoogleCloudRegion != "" {
 			result.EnvVars["GOOGLE_CLOUD_REGION"] = auth.GoogleCloudRegion
+			result.EnvVars["GOOGLE_CLOUD_LOCATION"] = auth.GoogleCloudRegion
 		}
 		if auth.GoogleAppCredentials != "" {
 			adcContainerPath := "~/.config/gcloud/application_default_credentials.json"
@@ -418,6 +420,7 @@ func (g *GeminiCLI) resolveAutoDetect(auth api.AuthConfig) (*api.ResolvedAuth, e
 		}
 		if auth.GoogleCloudRegion != "" {
 			result.EnvVars["GOOGLE_CLOUD_REGION"] = auth.GoogleCloudRegion
+			result.EnvVars["GOOGLE_CLOUD_LOCATION"] = auth.GoogleCloudRegion
 		}
 		return result, nil
 	}

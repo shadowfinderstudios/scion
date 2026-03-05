@@ -224,6 +224,9 @@ func TestGeminiResolveAuth_ExplicitVertexAI(t *testing.T) {
 	if result.EnvVars["GOOGLE_CLOUD_REGION"] != "us-east1" {
 		t.Errorf("GOOGLE_CLOUD_REGION = %q, want %q", result.EnvVars["GOOGLE_CLOUD_REGION"], "us-east1")
 	}
+	if result.EnvVars["GOOGLE_CLOUD_LOCATION"] != "us-east1" {
+		t.Errorf("GOOGLE_CLOUD_LOCATION = %q, want %q", result.EnvVars["GOOGLE_CLOUD_LOCATION"], "us-east1")
+	}
 	if len(result.Files) != 1 {
 		t.Fatalf("expected 1 file mapping, got %d", len(result.Files))
 	}
@@ -284,6 +287,25 @@ func TestGeminiResolveAuth_AutoDetectADCVertexAI(t *testing.T) {
 	}
 	if len(result.Files) != 1 || result.Files[0].ContainerPath != "~/.config/gcloud/application_default_credentials.json" {
 		t.Errorf("expected ADC file mapping, got %v", result.Files)
+	}
+}
+
+func TestGeminiResolveAuth_AutoDetectADCVertexAIWithRegion(t *testing.T) {
+	g := &GeminiCLI{}
+	auth := api.AuthConfig{
+		GoogleAppCredentials: "/path/to/adc.json",
+		GoogleCloudProject:   "my-project",
+		GoogleCloudRegion:    "europe-west1",
+	}
+	result, err := g.ResolveAuth(auth)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.EnvVars["GOOGLE_CLOUD_REGION"] != "europe-west1" {
+		t.Errorf("GOOGLE_CLOUD_REGION = %q, want %q", result.EnvVars["GOOGLE_CLOUD_REGION"], "europe-west1")
+	}
+	if result.EnvVars["GOOGLE_CLOUD_LOCATION"] != "europe-west1" {
+		t.Errorf("GOOGLE_CLOUD_LOCATION = %q, want %q", result.EnvVars["GOOGLE_CLOUD_LOCATION"], "europe-west1")
 	}
 }
 
