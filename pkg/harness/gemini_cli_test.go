@@ -179,21 +179,16 @@ func TestGeminiResolveAuth_ExplicitAuthFileOAuth(t *testing.T) {
 	}
 }
 
-func TestGeminiResolveAuth_ExplicitAuthFileADC(t *testing.T) {
+func TestGeminiResolveAuth_ExplicitAuthFileADCOnly(t *testing.T) {
 	g := &GeminiCLI{}
+	// auth-file requires OAuth creds; ADC alone is not sufficient
 	auth := api.AuthConfig{
 		SelectedType:         "auth-file",
 		GoogleAppCredentials: "/path/to/adc.json",
 	}
-	result, err := g.ResolveAuth(auth)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Method != "auth-file" {
-		t.Errorf("Method = %q, want %q", result.Method, "auth-file")
-	}
-	if len(result.Files) != 1 {
-		t.Fatalf("expected 1 file mapping, got %d", len(result.Files))
+	_, err := g.ResolveAuth(auth)
+	if err == nil {
+		t.Fatal("expected error for explicit auth-file with only ADC (no OAuth creds)")
 	}
 }
 
@@ -266,15 +261,13 @@ func TestGeminiResolveAuth_AutoDetectAPIKey(t *testing.T) {
 	}
 }
 
-func TestGeminiResolveAuth_AutoDetectADC(t *testing.T) {
+func TestGeminiResolveAuth_AutoDetectADCOnly(t *testing.T) {
 	g := &GeminiCLI{}
+	// ADC alone should not auto-detect for gemini; OAuth is required for file-based auth
 	auth := api.AuthConfig{GoogleAppCredentials: "/path/to/adc.json"}
-	result, err := g.ResolveAuth(auth)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Method != "auth-file" {
-		t.Errorf("Method = %q, want %q", result.Method, "auth-file")
+	_, err := g.ResolveAuth(auth)
+	if err == nil {
+		t.Fatal("expected error for auto-detect with only ADC (no OAuth creds)")
 	}
 }
 
@@ -287,6 +280,12 @@ func TestGeminiResolveAuth_AutoDetectOAuth(t *testing.T) {
 	}
 	if result.Method != "auth-file" {
 		t.Errorf("Method = %q, want %q", result.Method, "auth-file")
+	}
+	if result.EnvVars["GEMINI_DEFAULT_AUTH_TYPE"] != "oauth-personal" {
+		t.Errorf("GEMINI_DEFAULT_AUTH_TYPE = %q, want %q", result.EnvVars["GEMINI_DEFAULT_AUTH_TYPE"], "oauth-personal")
+	}
+	if len(result.Files) != 1 || result.Files[0].ContainerPath != "~/.gemini/oauth_creds.json" {
+		t.Errorf("expected file mapping to ~/.gemini/oauth_creds.json, got %v", result.Files)
 	}
 }
 
