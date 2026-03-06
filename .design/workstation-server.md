@@ -4,7 +4,9 @@
 
 Evolve `scion server` to support a **workstation mode**: a single-user, local-first configuration optimized for developers running Scion on their own machine. This complements the existing multi-user Hub deployment use-case.
 
-The workstation mode collapses the current multi-flag ceremony (`--enable-hub --enable-runtime-broker --enable-web --dev-auth`) into a single intent, adds daemon lifecycle management (start/stop/restart/status) directly on the `scion server` command (mirroring `scion broker`), and introduces a `--foreground` flag for integration with process managers like systemd and launchd.
+Workstation mode is the **default** behavior of `scion server start`. A bare `scion server start` with no flags enables all components (Hub, Broker, Web), uses local backends, dev-auth, and binds to `127.0.0.1`. Production deployments opt in via `--production`, which restores the current flag-driven composition model.
+
+The command also gains daemon lifecycle management (start/stop/restart/status) directly on `scion server` (mirroring `scion broker`), and a `--foreground` flag for integration with process managers like systemd and launchd.
 
 ## Motivation
 
@@ -17,17 +19,27 @@ scion server start --enable-hub --enable-runtime-broker --enable-web --dev-auth 
 This is verbose and leaks infrastructure concerns (Hub, Broker, dev-auth) that a single-user operator shouldn't need to think about. Meanwhile, the `scion broker` command already has polished daemon management (`start`/`stop`/`restart`/`status` with `--foreground`), but `scion server` has only `start` and always runs in the foreground.
 
 **Goals:**
-1. Make single-workstation usage the easy, default path.
+1. Make single-workstation usage the easy, zero-flag default path.
 2. Add daemon lifecycle to `scion server` (parity with `scion broker`).
 3. Add `--foreground` for systemd/launchd integration.
 4. Disable GCP-dependent features (secrets, storage, Cloud Logging) by default.
-5. Keep the existing flag-based composition for production Hub deployments unchanged.
+5. Keep the existing flag-based composition available for production Hub deployments via `--production`.
 
 ## Design
 
-### 1. New `--workstation` Flag
+### 1. Default Workstation Mode with `--production` Opt-In
 
-A meta-flag on `scion server start` that implies:
+`scion server start` with no flags operates in workstation mode. This is the simple, "just works" path. A `--production` flag opts into the current explicit-flag composition model for multi-user Hub deployments.
+
+#### Mode Selection Logic
+
+```
+scion server start                          -> workstation mode (default)
+scion server start --production             -> production mode (explicit flags required)
+scion server start --production --enable-hub --enable-web  -> production, hub + web only
+```
+
+**Workstation mode** implies:
 
 | Implied Setting | Value | Notes |
 |---|---|---|
@@ -36,16 +48,40 @@ A meta-flag on `scion server start` that implies:
 | `--enable-web` | `true` | |
 | `--dev-auth` | `true` | Auto-generates token |
 | `--auto-provide` | `true` | |
+| `--host` | `127.0.0.1` | Loopback only for single-user security |
 | `secrets.backend` | `"local"` | SQLite-backed secrets |
 | `storage.provider` | `"local"` | Local filesystem storage |
 | GCP Cloud Logging | disabled | No `SCION_LOG_GCP` |
 
-Explicit flags still override implied values, so `--workstation --no-web` or `--workstation --storage-bucket gs://...` would work.
+**Production mode** (`--production`) restores the current behavior:
+- No components enabled by default; the operator must explicitly pass `--enable-hub`, `--enable-runtime-broker`, `--enable-web`, etc.
+- Binds to `0.0.0.0` by default.
+- GCP backends are available and configurable via the existing flags/env vars.
+- Dev-auth is off unless explicitly passed.
 
-**Implementation:** Early in `runServerStart()`, before the existing flag-changed checks, detect `--workstation` and set the default values for all implied flags. The existing `cmd.Flags().Changed()` guards ensure explicit overrides win.
+Explicit flags override implied workstation defaults, so `scion server start --no-web` or `scion server start --host 0.0.0.0` work in workstation mode.
+
+#### Why `--production` instead of inverting to `--disable-*` flags
+
+Three options were considered:
+
+1. **Invert all `--enable-*` flags to `--disable-*`**: This would make workstation the default but creates a migration burden — every existing production deployment script using `--enable-hub` would need updating. It also doubles the flag surface (`--enable-hub` / `--disable-hub`).
+
+2. **`--production` flag**: A single flag that says "I'm a production deployment, give me explicit control." Clean, minimal surface area, no migration needed for existing deployments that simply add `--production`. Existing `--enable-*` flags continue to work in both modes (they're just redundant in workstation mode).
+
+3. **`--workstation` flag**: Requires the operator to remember and pass a flag for the common case. The whole point is that the common case should be zero-ceremony.
+
+**Decision: `--production`**. It optimizes for the common case (workstation) while keeping the escape hatch simple and explicit.
+
+#### Implementation
+
+Early in `runServerStart()`, before the existing flag-changed checks, determine the mode and set defaults:
 
 ```go
-if workstationMode {
+productionMode := cmd.Flags().Changed("production") && production
+
+if !productionMode {
+    // Workstation mode: enable everything by default
     if !cmd.Flags().Changed("enable-hub") {
         enableHub = true
     }
@@ -63,6 +99,9 @@ if workstationMode {
     if !cmd.Flags().Changed("auto-provide") {
         serverAutoProvide = true
     }
+    if !cmd.Flags().Changed("host") {
+        cfg.Host = "127.0.0.1"
+    }
     // Force local backends unless explicitly overridden
     if !cmd.Flags().Changed("storage-bucket") {
         cfg.Storage.Provider = "local"
@@ -70,6 +109,8 @@ if workstationMode {
     cfg.Secrets.Backend = "local"
 }
 ```
+
+The existing `cmd.Flags().Changed()` guards ensure explicit overrides always win, regardless of mode.
 
 ### 2. Daemon Lifecycle for `scion server`
 
@@ -88,17 +129,17 @@ Add `stop`, `restart`, and `status` subcommands to `scion server`, mirroring the
 
 | Command | Behavior |
 |---|---|
-| `scion server start` | Daemon by default; `--foreground` for foreground |
-| `scion server start --workstation` | All components enabled, daemon by default |
+| `scion server start` | Daemon by default, workstation mode; `--foreground` for foreground |
+| `scion server start --production --enable-hub` | Production mode, daemon by default |
 | `scion server stop` | SIGTERM via PID file |
 | `scion server restart` | Stop + start with same args |
 | `scion server status` | Daemon status + component health checks |
 
 #### PID/Log File Naming
 
-The `pkg/daemon` package currently hardcodes `broker.pid` / `broker.log`. This needs to be generalized:
+The `pkg/daemon` package currently hardcodes `broker.pid` / `broker.log`. This needs to be generalized.
 
-**Option A (Recommended):** Add a `component` parameter to daemon functions:
+Add a `component` parameter to daemon functions:
 
 ```go
 // Before:
@@ -110,11 +151,7 @@ func PIDFileName(component string) string { return component + ".pid" }
 func LogFileName(component string) string { return component + ".log" }
 ```
 
-The server would use `"server"` as the component, producing `server.pid` / `server.log` in `~/.scion/`. The broker keeps `"broker"` for backward compatibility.
-
-**Option B:** Use a single PID file (`scion.pid`) since only one daemon process should manage components. This is simpler but prevents running a standalone broker alongside a hub server.
-
-**Recommendation:** Option A, to maintain flexibility. The existing broker daemon logic and the new server daemon logic can coexist independently.
+The server uses `"server"` as the component, producing `server.pid` / `server.log` in `~/.scion/`. The broker keeps `"broker"` for backward compatibility. Separate PID files allow a standalone broker and a full server to coexist independently, with port-conflict detection (already exists in `checkPort()`) preventing actual runtime collisions.
 
 #### `scion broker` Delegation Change
 
@@ -146,7 +183,7 @@ After=network.target docker.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/scion server start --workstation --foreground
+ExecStart=/usr/local/bin/scion server start --foreground
 ExecStop=/usr/local/bin/scion server stop
 Restart=on-failure
 User=developer
@@ -166,7 +203,6 @@ WantedBy=multi-user.target
         <string>/usr/local/bin/scion</string>
         <string>server</string>
         <string>start</string>
-        <string>--workstation</string>
         <string>--foreground</string>
     </array>
     <key>RunAtLoad</key>
@@ -176,6 +212,8 @@ WantedBy=multi-user.target
 </dict>
 </plist>
 ```
+
+Note: `--production` is not needed in the service file examples above — workstation mode defaults are appropriate for a single-user managed service. Production deployments would add `--production` and the relevant `--enable-*` flags.
 
 ### 4. GCP Feature Gating
 
@@ -189,14 +227,26 @@ Several features default to GCP services and should be explicitly opt-in rather 
 | OAuth (Google/GitHub) | env-driven | disabled (dev-auth) | `SCION_SERVER_OAUTH_*` env vars |
 | Telemetry GCP creds | hub-injected | not injected | configure via secrets |
 
-The current defaults are already correct for local use. The `--workstation` flag simply guarantees the local path by:
+The current defaults are already correct for local use. Workstation mode simply guarantees the local path by:
 - Forcing `cfg.Secrets.Backend = "local"`
 - Forcing `cfg.Storage.Provider = "local"` (unless `--storage-bucket` is given)
 - Not setting `SCION_LOG_GCP`
 
 No code changes are needed to the secret or storage backends themselves — they already support `"local"` mode.
 
-### 5. `scion server status` Command
+### 5. Loopback Binding by Default
+
+In workstation mode, the server binds to `127.0.0.1` instead of `0.0.0.0`. This is the secure default for single-user operation — the server is only accessible from the local machine.
+
+To expose the server on the network (e.g., for accessing from another device on the LAN), the operator explicitly overrides:
+
+```bash
+scion server start --host 0.0.0.0
+```
+
+Production mode (`--production`) retains `0.0.0.0` as the default, as production deployments typically sit behind a reverse proxy or load balancer.
+
+### 6. `scion server status` Command
 
 Report composite status of all components:
 
@@ -206,6 +256,7 @@ Scion Server Status
   Daemon:        running (PID: 12345)
   Log file:      /home/user/.scion/server.log
   PID file:      /home/user/.scion/server.pid
+  Listening:     127.0.0.1:8080
 
 Components:
   Hub API:       running (port 8080, mounted on web)
@@ -232,51 +283,42 @@ This would probe the health endpoints (`/healthz`) on the known ports, and check
 5. **Add `scion server status`**: Daemon status + health checks.
 6. **Invert default**: `scion server start` runs as daemon unless `--foreground`.
 
-### Phase 2: Workstation Mode (cmd/server.go)
+### Phase 2: Default Workstation Mode (cmd/server.go)
 
-1. **Add `--workstation` flag** with implied defaults.
-2. **Force local backends** for secrets and storage in workstation mode.
-3. **Update help text and examples** to feature workstation mode prominently.
+1. **Add `--production` flag** that opts into explicit-flag mode.
+2. **Set workstation defaults** when `--production` is not present (all components enabled, dev-auth, auto-provide, loopback binding, local backends).
+3. **Update help text and examples** to feature the zero-flag workstation experience prominently.
 
 ### Phase 3: Configuration Support (pkg/config)
 
-1. **Support `mode: workstation` in `settings.yaml`** so the flag doesn't need to be passed every time:
+1. **Support `mode: production` in `settings.yaml`** so production deployments can set the mode once:
    ```yaml
    server:
-     mode: workstation
+     mode: production
    ```
+   When `mode: production` is set in config, the server behaves as if `--production` were passed. Workstation mode remains the default when no mode is configured.
 2. **Persist daemon args** so `scion server restart` can re-launch with the same flags without requiring the user to re-specify them. Store in `~/.scion/server-args.json`.
 
 ### Phase 4: Polish
 
-1. **First-run experience**: `scion server start --workstation` prints the dev token and a quickstart URL.
+1. **First-run experience**: `scion server start` prints the dev token and a quickstart URL.
 2. **`scion server install`**: (Optional) Generate systemd/launchd service files for the current platform.
 
 ## Files to Modify
 
 | File | Changes |
 |---|---|
-| `cmd/server.go` | Add `--foreground`, `--workstation` flags; add `stop`, `restart`, `status` subcommands; invert daemon default |
+| `cmd/server.go` | Add `--foreground`, `--production` flags; add `stop`, `restart`, `status` subcommands; implement workstation-mode defaults; default to loopback binding |
 | `pkg/daemon/daemon.go` | Parameterize PID/log filenames by component name |
 | `cmd/broker.go` | Update daemon calls to use new parameterized API |
 | `pkg/config/hub_config.go` | Add `Mode` field to `GlobalConfig` for `settings.yaml` support |
 
 ## Backward Compatibility
 
-- `scion server start --enable-hub --enable-runtime-broker` continues to work unchanged (foreground behavior preserved when `--foreground` is passed).
-- **Breaking change**: `scion server start` without `--foreground` will now daemonize instead of running in foreground. This is acceptable because:
-  - The current foreground-only behavior has no daemon management (no stop/restart).
-  - Production deployments use process managers (systemd, Cloud Run) that would pass `--foreground`.
-  - The `scion broker start` command already established daemon-by-default as the convention.
+- **`scion server start` behavior change**: Previously ran in foreground with no components enabled. Now daemonizes in workstation mode with all components enabled. This is a deliberate UX improvement — the old behavior required verbose flags to be useful at all.
+  - Users who relied on foreground execution can add `--foreground`.
+  - Users who relied on selective component enabling can add `--production`.
+  - Production deployments using process managers (systemd, Cloud Run) should add `--production --foreground` and their existing `--enable-*` flags.
+- `scion server start --production --enable-hub --enable-runtime-broker --foreground` is equivalent to the old `scion server start --enable-hub --enable-runtime-broker`.
 - `scion broker start/stop/restart/status` continue to work unchanged. They manage a separate `broker.pid` and only start the runtime broker component.
-
-## Open Questions
-
-1. **Should `scion server` and `scion broker` share a PID file?** Currently, `broker start` delegates to `server start --enable-runtime-broker`. If the server also daemonizes, running both `scion server start` and `scion broker start` could conflict. Options:
-   - **Separate PIDs**: Server uses `server.pid`, broker uses `broker.pid`. They could co-run on different ports.
-   - **Shared PID with conflict detection**: Detect if a server daemon is already running the broker component and refuse to start a standalone broker.
-   - **Recommendation**: Separate PIDs with port-conflict detection (already exists in `checkPort()`).
-
-2. **Should workstation mode bind to `127.0.0.1` instead of `0.0.0.0`?** For single-user security, binding to localhost-only makes sense. Production deployments explicitly set `--host`.
-
-3. **Should `--workstation` be the default when no `--enable-*` flags are given?** Instead of erroring with "no server components enabled", we could default to workstation mode. This would make `scion server start` "just work" but might surprise users expecting the current behavior.
+- The `scion broker start` delegation to `scion server start --enable-runtime-broker` continues unchanged (it will need to pass `--production` internally to avoid triggering workstation defaults).
