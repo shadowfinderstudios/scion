@@ -41,13 +41,13 @@ import (
 	"github.com/ptone/scion-agent/pkg/brokercredentials"
 	"github.com/ptone/scion-agent/pkg/config"
 	"github.com/ptone/scion-agent/pkg/daemon"
+	"github.com/ptone/scion-agent/pkg/ent/entc"
 	"github.com/ptone/scion-agent/pkg/harness"
 	"github.com/ptone/scion-agent/pkg/hub"
 	"github.com/ptone/scion-agent/pkg/runtime"
 	"github.com/ptone/scion-agent/pkg/runtimebroker"
 	"github.com/ptone/scion-agent/pkg/secret"
 	"github.com/ptone/scion-agent/pkg/storage"
-	"github.com/ptone/scion-agent/pkg/ent/entc"
 	"github.com/ptone/scion-agent/pkg/store"
 	"github.com/ptone/scion-agent/pkg/store/entadapter"
 	"github.com/ptone/scion-agent/pkg/store/sqlite"
@@ -60,17 +60,17 @@ import (
 const GlobalGroveName = "global"
 
 var (
-	serverConfigPath  string
-	hubPort           int
-	hubHost           string
-	enableHub         bool
+	serverConfigPath    string
+	hubPort             int
+	hubHost             string
+	enableHub           bool
 	enableRuntimeBroker bool
 	runtimeBrokerPort   int
-	dbURL             string
-	enableDevAuth     bool
-	enableDebug       bool
-	storageBucket     string
-	storageDir        string
+	dbURL               string
+	enableDevAuth       bool
+	enableDebug         bool
+	storageBucket       string
+	storageDir          string
 
 	// Template cache settings for Runtime Broker
 	templateCacheDir string
@@ -86,9 +86,9 @@ var (
 	adminEmails string
 
 	// Web frontend flags
-	enableWeb       bool
-	webPort         int
-	webAssetsDir    string
+	enableWeb        bool
+	webPort          int
+	webAssetsDir     string
 	webSessionSecret string
 	webBaseURL       string
 
@@ -258,7 +258,7 @@ var serverInstallProduction bool
 
 // portStatus represents the result of checking a port.
 type portStatus struct {
-	inUse        bool
+	inUse         bool
 	isScionServer bool
 }
 
@@ -1062,26 +1062,26 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 
 		// Create Hub server configuration
 		hubCfg := hub.ServerConfig{
-			Port:               cfg.Hub.Port,
-			Host:               cfg.Hub.Host,
-			ReadTimeout:        cfg.Hub.ReadTimeout,
-			WriteTimeout:       cfg.Hub.WriteTimeout,
-			CORSEnabled:        cfg.Hub.CORSEnabled,
-			CORSAllowedOrigins: cfg.Hub.CORSAllowedOrigins,
-			CORSAllowedMethods: cfg.Hub.CORSAllowedMethods,
-			CORSAllowedHeaders: cfg.Hub.CORSAllowedHeaders,
-			CORSMaxAge:         cfg.Hub.CORSMaxAge,
-			DevAuthToken:       devAuthToken,
-			Debug:              enableDebug,
-			AuthorizedDomains:  cfg.Auth.AuthorizedDomains,
-			AdminEmails:        adminEmailList,
+			Port:                  cfg.Hub.Port,
+			Host:                  cfg.Hub.Host,
+			ReadTimeout:           cfg.Hub.ReadTimeout,
+			WriteTimeout:          cfg.Hub.WriteTimeout,
+			CORSEnabled:           cfg.Hub.CORSEnabled,
+			CORSAllowedOrigins:    cfg.Hub.CORSAllowedOrigins,
+			CORSAllowedMethods:    cfg.Hub.CORSAllowedMethods,
+			CORSAllowedHeaders:    cfg.Hub.CORSAllowedHeaders,
+			CORSMaxAge:            cfg.Hub.CORSMaxAge,
+			DevAuthToken:          devAuthToken,
+			Debug:                 enableDebug,
+			AuthorizedDomains:     cfg.Auth.AuthorizedDomains,
+			AdminEmails:           adminEmailList,
 			HubEndpoint:           hubEndpoint,
 			SoftDeleteRetention:   cfg.Hub.SoftDeleteRetention,
 			SoftDeleteRetainFiles: cfg.Hub.SoftDeleteRetainFiles,
-			AdminMode:            adminMode,
-			MaintenanceMessage:   maintenanceMessage,
-			TelemetryDefault:     cfg.TelemetryEnabled,
-			BrokerAuthConfig:     hub.DefaultBrokerAuthConfig(), // Enable broker HMAC authentication
+			AdminMode:             adminMode,
+			MaintenanceMessage:    maintenanceMessage,
+			TelemetryDefault:      cfg.TelemetryEnabled,
+			BrokerAuthConfig:      hub.DefaultBrokerAuthConfig(), // Enable broker HMAC authentication
 			OAuthConfig: hub.OAuthConfig{
 				Web: hub.OAuthClientConfig{
 					Google: hub.OAuthProviderConfig{
@@ -1466,14 +1466,14 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 			WriteTimeout:         cfg.RuntimeBroker.WriteTimeout,
 			HubEndpoint:          hubEndpointForRH,
 			ContainerHubEndpoint: containerHubEndpoint,
-			BrokerID:           brokerID,
-			BrokerName:         brokerName,
-			CORSEnabled:        cfg.RuntimeBroker.CORSEnabled,
-			CORSAllowedOrigins: cfg.RuntimeBroker.CORSAllowedOrigins,
-			CORSAllowedMethods: cfg.RuntimeBroker.CORSAllowedMethods,
-			CORSAllowedHeaders: cfg.RuntimeBroker.CORSAllowedHeaders,
-			CORSMaxAge:         cfg.RuntimeBroker.CORSMaxAge,
-			Debug:              enableDebug,
+			BrokerID:             brokerID,
+			BrokerName:           brokerName,
+			CORSEnabled:          cfg.RuntimeBroker.CORSEnabled,
+			CORSAllowedOrigins:   cfg.RuntimeBroker.CORSAllowedOrigins,
+			CORSAllowedMethods:   cfg.RuntimeBroker.CORSAllowedMethods,
+			CORSAllowedHeaders:   cfg.RuntimeBroker.CORSAllowedHeaders,
+			CORSMaxAge:           cfg.RuntimeBroker.CORSMaxAge,
+			Debug:                enableDebug,
 
 			// Hub integration for template hydration
 			HubEnabled:           hubEndpointForRH != "",
@@ -1492,7 +1492,9 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 			HeartbeatEnabled:      hubEndpointForRH != "",
 
 			// In-memory credentials for co-located mode (allows control channel without file-based creds)
-			InMemoryCredentials: inMemoryCreds,
+			InMemoryCredentials:  inMemoryCreds,
+			BrokerAuthEnabled:    true,
+			BrokerAuthStrictMode: true,
 		}
 
 		// Create Runtime Broker server
@@ -1719,17 +1721,17 @@ func registerGlobalGroveAndBroker(ctx context.Context, s store.Store, brokerID, 
 // agentDispatcherAdapter adapts the agent.Manager to the hub.AgentDispatcher interface.
 // This enables the Hub to dispatch agent creation to a co-located runtime broker.
 type agentDispatcherAdapter struct {
-	manager agent.Manager
-	store   store.Store
-	brokerID  string // The ID of this runtime broker
+	manager  agent.Manager
+	store    store.Store
+	brokerID string // The ID of this runtime broker
 }
 
 // newAgentDispatcherAdapter creates a new dispatcher adapter.
 func newAgentDispatcherAdapter(mgr agent.Manager, s store.Store, brokerID string) *agentDispatcherAdapter {
 	return &agentDispatcherAdapter{
-		manager: mgr,
-		store:   s,
-		brokerID:  brokerID,
+		manager:  mgr,
+		store:    s,
+		brokerID: brokerID,
 	}
 }
 

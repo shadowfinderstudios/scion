@@ -55,6 +55,8 @@ func newTestServerWithInMemoryCreds(creds *brokercredentials.BrokerCredentials) 
 	cfg.HubEnabled = true
 	cfg.HubEndpoint = creds.HubEndpoint
 	cfg.InMemoryCredentials = creds
+	// Most tests in this file focus on hub connection behavior, not auth gates.
+	cfg.BrokerAuthEnabled = false
 
 	mgr := &mockManager{}
 	rt := &runtime.MockRuntime{}
@@ -794,6 +796,68 @@ func TestBuildAuthMiddleware_WithKeys(t *testing.T) {
 
 	if srv.brokerAuthMiddleware == nil {
 		t.Error("expected middleware to be created when keys available")
+	}
+}
+
+func TestDefaultServerConfig_SecureBrokerAuthDefaults(t *testing.T) {
+	cfg := DefaultServerConfig()
+	if !cfg.BrokerAuthEnabled {
+		t.Error("expected BrokerAuthEnabled to default to true")
+	}
+	if !cfg.BrokerAuthStrictMode {
+		t.Error("expected BrokerAuthStrictMode to default to true")
+	}
+}
+
+func TestRuntimeBroker_DefaultAuth_DeniesUnauthenticatedRequests(t *testing.T) {
+	creds := makeTestCreds("local", "broker-1", "http://localhost:8080")
+
+	cfg := DefaultServerConfig()
+	cfg.BrokerID = "broker-1"
+	cfg.BrokerName = "test-host"
+	cfg.HubEnabled = true
+	cfg.HubEndpoint = "http://localhost:8080"
+	cfg.InMemoryCredentials = creds
+
+	srv := New(cfg, &mockManager{}, &runtime.MockRuntime{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d for unauthenticated request, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestValidateBrokerAuthStartup_HubModeWithoutKeysFails(t *testing.T) {
+	cfg := DefaultServerConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.HubEnabled = true
+	cfg.HubEndpoint = "http://localhost:9810"
+	cfg.InMemoryCredentials = nil
+
+	srv := New(cfg, &mockManager{}, &runtime.MockRuntime{})
+	if err := srv.validateBrokerAuthStartup(); err == nil {
+		t.Fatal("expected startup validation to fail when hub mode has no HMAC keys")
+	}
+}
+
+func TestValidateBrokerAuthStartup_NonLoopbackPermissiveModeFails(t *testing.T) {
+	creds := makeTestCreds("local", "broker-1", "http://localhost:8080")
+
+	cfg := DefaultServerConfig()
+	cfg.Host = "0.0.0.0"
+	cfg.BrokerID = "broker-1"
+	cfg.BrokerName = "test-host"
+	cfg.HubEnabled = true
+	cfg.HubEndpoint = "http://localhost:8080"
+	cfg.InMemoryCredentials = creds
+	cfg.BrokerAuthStrictMode = false
+
+	srv := New(cfg, &mockManager{}, &runtime.MockRuntime{})
+	if err := srv.validateBrokerAuthStartup(); err == nil {
+		t.Fatal("expected startup validation to fail for non-loopback host without strict auth")
 	}
 }
 

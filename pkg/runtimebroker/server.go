@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -134,15 +135,17 @@ type ServerConfig struct {
 // DefaultServerConfig returns the default server configuration.
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
-		Port:               9800,
-		Host:               "0.0.0.0",
-		ReadTimeout:        30 * time.Second,
-		WriteTimeout:       120 * time.Second,
-		CORSEnabled:        true,
-		CORSAllowedOrigins: []string{"*"},
-		CORSAllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Authorization", "Content-Type", "X-Scion-Broker-Token", "X-API-Key", "X-Scion-Broker-ID", "X-Scion-Timestamp", "X-Scion-Nonce", "X-Scion-Signature", "X-Scion-Signed-Headers"},
-		CORSMaxAge:         3600,
+		Port:                 9800,
+		Host:                 "0.0.0.0",
+		ReadTimeout:          30 * time.Second,
+		WriteTimeout:         120 * time.Second,
+		CORSEnabled:          true,
+		CORSAllowedOrigins:   []string{"*"},
+		CORSAllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders:   []string{"Authorization", "Content-Type", "X-Scion-Broker-Token", "X-API-Key", "X-Scion-Broker-ID", "X-Scion-Timestamp", "X-Scion-Nonce", "X-Scion-Signature", "X-Scion-Signed-Headers"},
+		CORSMaxAge:           3600,
+		BrokerAuthEnabled:    true,
+		BrokerAuthStrictMode: true,
 	}
 }
 
@@ -552,6 +555,7 @@ func (s *Server) buildAuthMiddleware() {
 	s.hubMu.RUnlock()
 
 	if !s.config.BrokerAuthEnabled || len(keys) == 0 {
+		s.brokerAuthMiddleware = nil
 		return
 	}
 
@@ -569,6 +573,55 @@ func (s *Server) buildAuthMiddleware() {
 	}
 
 	s.brokerAuthMiddleware.UpdateKeys(keys)
+}
+
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" || strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func (s *Server) authKeyCount() int {
+	s.hubMu.RLock()
+	defer s.hubMu.RUnlock()
+	count := 0
+	for _, conn := range s.hubConnections {
+		if len(conn.SecretKey) > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Server) validateBrokerAuthStartup() error {
+	strictAuthConfigured := s.config.BrokerAuthEnabled && s.config.BrokerAuthStrictMode
+	hasKeys := s.authKeyCount() > 0
+	loopbackOnly := isLoopbackHost(s.config.Host)
+
+	// Hub-connected brokers must have usable HMAC keys for inbound request auth.
+	if s.config.HubEnabled && !hasKeys {
+		return fmt.Errorf("runtime broker hub mode requires HMAC auth keys, but none are available")
+	}
+
+	// Non-loopback listeners must not run without strict broker auth and keys.
+	if !loopbackOnly && (!strictAuthConfigured || !hasKeys) {
+		return fmt.Errorf("runtime broker API bound to %q requires strict broker auth with valid HMAC keys", s.config.Host)
+	}
+
+	// Loopback-only listeners may be temporarily permissive, but emit a warning.
+	if loopbackOnly && (!strictAuthConfigured || !hasKeys) {
+		slog.Warn("Runtime Broker API is loopback-only and running without strict broker auth",
+			"host", s.config.Host,
+			"brokerAuthEnabled", s.config.BrokerAuthEnabled,
+			"brokerAuthStrictMode", s.config.BrokerAuthStrictMode,
+			"authKeys", s.authKeyCount(),
+		)
+	}
+
+	return nil
 }
 
 // SetHubClient sets the Hub client for template hydration.
@@ -621,6 +674,10 @@ func (s *Server) GetHydrator() *templatecache.Hydrator {
 func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.startTime = time.Now()
+	if err := s.validateBrokerAuthStartup(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 
 	handler := s.applyMiddleware(s.mux)
 
