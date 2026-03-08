@@ -52,6 +52,8 @@ func (h *LoggingHandler) eventToTag(event *hooks.Event) string {
 		return string(state.ActivityIdle)
 	case hooks.EventNotification:
 		return string(state.ActivityWaitingForInput)
+	case hooks.EventResponseComplete:
+		return string(state.ActivityCompleted)
 	case hooks.EventSessionEnd:
 		return string(state.PhaseStopped)
 	case hooks.EventPreStart:
@@ -119,6 +121,12 @@ func (h *LoggingHandler) formatLogMessage(event *hooks.Event) string {
 			return fmt.Sprintf("Notification: %s", event.Data.Message)
 		}
 		return "Notification received"
+
+	case hooks.EventResponseComplete:
+		if event.Data.Message != "" {
+			return fmt.Sprintf("Agent completed task: %s", event.Data.Message)
+		}
+		return "Agent completed task"
 
 	case hooks.EventPreStart:
 		return "Container initializing"

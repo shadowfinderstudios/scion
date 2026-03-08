@@ -34,7 +34,7 @@ var (
 var hookCmd = &cobra.Command{
 	Use:   "hook [event]",
 	Short: "Process harness hook events",
-	Long: `The hook command processes events from agent harnesses (Claude Code, Gemini CLI).
+	Long: `The hook command processes events from agent harnesses (Claude Code, Gemini CLI, Codex).
 
 It normalizes events from different harness formats (dialects) and updates agent
 status, logs events, and performs other hook-related actions.
@@ -92,7 +92,7 @@ func init() {
 	rootCmd.AddCommand(hookCmd)
 
 	hookCmd.Flags().StringVar(&hookDialect, "dialect", "claude",
-		"Harness dialect for event parsing (claude, gemini)")
+		"Harness dialect for event parsing (claude, gemini, codex)")
 	hookCmd.Flags().StringVar(&hookData, "data", "",
 		"Additional data for subcommands")
 
@@ -172,9 +172,8 @@ func processHookData(data []byte) error {
 	// Create processor with handlers
 	processor := hooks.NewHarnessProcessor()
 
-	// Register dialects
-	processor.RegisterDialect(dialects.NewClaudeDialect())
-	processor.RegisterDialect(dialects.NewGeminiDialect())
+	// Register built-in dialects.
+	dialects.RegisterBuiltins(processor)
 
 	// Register handlers
 	statusHandler := handlers.NewStatusHandler()

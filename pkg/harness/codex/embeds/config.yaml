@@ -1,3 +1,5 @@
 harness: codex
 image: us-central1-docker.pkg.dev/ptone-misc/public-docker/scion-codex:latest
 user: scion
+env:
+  SCION_CODEX_NOTIFY_AUTO_COMPLETE: "true"

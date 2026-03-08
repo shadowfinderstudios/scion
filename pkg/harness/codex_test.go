@@ -15,6 +15,8 @@
 package harness
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,4 +185,109 @@ func TestCodexInjectSystemPrompt_NoOp(t *testing.T) {
 	if string(data) != string(agentContent) {
 		t.Errorf("AGENTS.md was modified by InjectSystemPrompt; got %q, want %q", string(data), string(agentContent))
 	}
+}
+
+func TestCodexApplyTelemetrySettings_EnabledMergesOtelAndPreservesKeys(t *testing.T) {
+	agentHome := t.TempDir()
+	c := &Codex{}
+
+	codexDir := filepath.Join(agentHome, ".codex")
+	requireNoErr(t, os.MkdirAll(codexDir, 0755))
+	initial := `approval_policy = "never"
+custom_key = "keep-me"
+
+[projects."/workspace"]
+trust_level = "trusted"
+`
+	requireNoErr(t, os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(initial), 0644))
+
+	enabled := true
+	telemetry := &api.TelemetryConfig{
+		Enabled: &enabled,
+		Cloud: &api.TelemetryCloudConfig{
+			Endpoint: "collector.example.com:4317",
+			Protocol: "grpc",
+		},
+	}
+	err := c.ApplyTelemetrySettings(agentHome, telemetry, nil)
+	requireNoErr(t, err)
+
+	data, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	requireNoErr(t, err)
+	out := string(data)
+	containsAll(t, out,
+		`custom_key = "keep-me"`,
+		`notify = "sh ~/.codex/scion_notify.sh"`,
+		`[otel]`,
+		`enabled = true`,
+		`exporter = "otlp"`,
+		`endpoint = "collector.example.com:4317"`,
+		`protocol = "grpc"`,
+	)
+}
+
+func TestCodexApplyTelemetrySettings_DisabledDoesNotInjectOtel(t *testing.T) {
+	agentHome := t.TempDir()
+	c := &Codex{}
+	enabled := false
+	telemetry := &api.TelemetryConfig{Enabled: &enabled}
+
+	err := c.ApplyTelemetrySettings(agentHome, telemetry, nil)
+	requireNoErr(t, err)
+
+	data, err := os.ReadFile(filepath.Join(agentHome, ".codex", "config.toml"))
+	requireNoErr(t, err)
+	out := string(data)
+	containsAll(t, out, `notify = "sh ~/.codex/scion_notify.sh"`)
+	if strings.Contains(out, "[otel]") {
+		t.Fatalf("did not expect [otel] section when telemetry disabled, got:\n%s", out)
+	}
+}
+
+func TestCodexProvision_ReconcilesTelemetryFromScionAgentConfig(t *testing.T) {
+	agentDir := t.TempDir()
+	agentHome := filepath.Join(agentDir, "home")
+	requireNoErr(t, os.MkdirAll(agentHome, 0755))
+
+	enabled := true
+	cfg := api.ScionConfig{
+		Telemetry: &api.TelemetryConfig{
+			Enabled: &enabled,
+			Cloud: &api.TelemetryCloudConfig{
+				Endpoint: "otel.local:4317",
+				Protocol: "grpc",
+			},
+		},
+	}
+	data, err := jsonMarshal(cfg)
+	requireNoErr(t, err)
+	requireNoErr(t, os.WriteFile(filepath.Join(agentDir, "scion-agent.json"), data, 0644))
+
+	c := &Codex{}
+	err = c.Provision(context.Background(), "agent", agentHome, "/workspace")
+	requireNoErr(t, err)
+
+	out, err := os.ReadFile(filepath.Join(agentHome, ".codex", "config.toml"))
+	requireNoErr(t, err)
+	containsAll(t, string(out), `[otel]`, `endpoint = "otel.local:4317"`)
+}
+
+func requireNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func containsAll(t *testing.T, s string, substrings ...string) {
+	t.Helper()
+	for _, sub := range substrings {
+		if !strings.Contains(s, sub) {
+			t.Fatalf("expected output to contain %q, got:\n%s", sub, s)
+		}
+	}
+}
+
+func jsonMarshal(v interface{}) ([]byte, error) {
+	return json.MarshalIndent(v, "", "  ")
 }

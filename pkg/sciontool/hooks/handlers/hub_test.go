@@ -88,6 +88,11 @@ func TestHubHandler_EventMapping(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tmpHome := t.TempDir()
+			oldHome := os.Getenv("HOME")
+			os.Setenv("HOME", tmpHome)
+			defer os.Setenv("HOME", oldHome)
+
 			var receivedStatus string
 			var mu sync.Mutex
 			callCount := 0

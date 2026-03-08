@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ptone/scion-agent/pkg/harness"
 )
 
 func TestLoadHarnessConfigDir(t *testing.T) {
@@ -310,5 +312,20 @@ func TestSeedHarnessConfigFromFS(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(targetDir, "home", ".test-config")); err != nil {
 		t.Error("expected config directory to be created")
+	}
+}
+
+func TestSeedHarnessConfig_CodexNotifyScript(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, "codex")
+
+	err := SeedHarnessConfig(targetDir, &harness.Codex{}, false)
+	if err != nil {
+		t.Fatalf("SeedHarnessConfig failed: %v", err)
+	}
+
+	scriptPath := filepath.Join(targetDir, "home", ".codex", "scion_notify.sh")
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("expected notify script to be seeded at %s: %v", scriptPath, err)
 	}
 }

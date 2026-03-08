@@ -151,6 +151,19 @@ func (h *HubHandler) Handle(event *hooks.Event) error {
 			Message:  message,
 		})
 
+	case hooks.EventResponseComplete:
+		summary := "Task completed"
+		if event.Data.Message != "" {
+			summary = truncateMessage(event.Data.Message, 200)
+		}
+		log.Debug("Hub: Reporting task completed (response-complete)")
+		as := state.AgentState{Phase: state.PhaseRunning, Activity: state.ActivityCompleted}
+		err = h.client.UpdateStatus(ctx, hub.StatusUpdate{
+			Activity:    state.ActivityCompleted,
+			Status:      as.DisplayStatus(),
+			TaskSummary: summary,
+		})
+
 	case hooks.EventSessionEnd:
 		// Session ended
 		log.Debug("Hub: Reporting stopped (session end)")

@@ -71,3 +71,10 @@ type Harness interface {
 type AuthSettingsApplier interface {
 	ApplyAuthSettings(agentHome string, resolved *ResolvedAuth) error
 }
+
+// TelemetrySettingsApplier is an optional interface that harnesses can
+// implement to reconcile native telemetry settings files after effective
+// telemetry config (settings/template/CLI overrides) is resolved at start time.
+type TelemetrySettingsApplier interface {
+	ApplyTelemetrySettings(agentHome string, telemetry *TelemetryConfig, env map[string]string) error
+}

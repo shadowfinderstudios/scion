@@ -526,6 +526,18 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		util.Debugf("Start: no TelemetryOverride set")
 	}
 
+	// Allow harnesses to reconcile native telemetry config files with the
+	// effective telemetry settings before container launch.
+	var effectiveTelemetry *api.TelemetryConfig
+	if finalScionCfg != nil {
+		effectiveTelemetry = finalScionCfg.Telemetry
+	}
+	if telemetryApplier, ok := h.(api.TelemetrySettingsApplier); ok {
+		if err := telemetryApplier.ApplyTelemetrySettings(agentHome, effectiveTelemetry, opts.Env); err != nil {
+			return nil, fmt.Errorf("failed to apply telemetry settings: %w", err)
+		}
+	}
+
 	// Inject telemetry config as env vars for sciontool.
 	// Only set vars not already present (respecting explicit overrides).
 	if finalScionCfg != nil && finalScionCfg.Telemetry != nil {

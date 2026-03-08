@@ -79,10 +79,13 @@ Codex supports two authentication methods (auto-detected in this order):
 - **Config File**: `~/.codex/config.toml`.
 - **Default Flags**: Runs with `--full-auto` approval mode enabled by default.
 - **Resume Support**: Automatically uses the `resume` positional argument to continue existing sessions.
+- **Notify Bridge**: Scion configures `notify = "sh ~/.codex/scion_notify.sh"` so Codex notify payloads can drive Scion state updates.
+- **OpenTelemetry**: When telemetry is enabled, Scion reconciles Codex `[otel]` settings at start to export via OTLP (default `localhost:4317`, with explicit overrides honored).
 
 ### Known Limitations
 - **Auth File Copy**: The `auth.json` file is only copied when the agent is **created**.
 - **Model selection**: Specific model selection must currently be handled via the `config.toml` or environment variables within the agent.
+- **System Prompt Override**: Codex system prompt behavior is unchanged in this iteration; use `agent_instructions` for Scion-managed guidance.
 
 ---
 
@@ -107,5 +110,5 @@ The following table summarizes the capabilities supported by each agent harness 
 * **Interject** (pending feature): Key used to interrupt the agent (e.g., stop generation).
 * **Enqueue**: Ability to send messages to the agent while it's running (supported via the built-in Tmux session).
 * **Hooks**: Support for lifecycle hooks (e.g., `SessionStart`, `AfterTool`).
-* **OpenTelemetry** (pending feature): Specific events vary
+* **OpenTelemetry**: Specific events vary by harness and native emitter schema.
 * **System Prompt Override**: Support for providing a custom system prompt to the agent (e.g. via `system_prompt.md`).

@@ -243,6 +243,8 @@ func mapEmbedFileToHomePath(homeDir, configDir, fileName string) string {
 		return filepath.Join(homeDir, ".geminiignore")
 	case "config.toml":
 		return filepath.Join(homeDir, ".codex", "config.toml")
+	case "scion_notify.sh":
+		return filepath.Join(homeDir, ".codex", "scion_notify.sh")
 	case "opencode.json":
 		if configDir != "" {
 			return filepath.Join(homeDir, configDir, "opencode.json")

@@ -107,7 +107,7 @@ func TestProcessHookData_SessionEvents(t *testing.T) {
 	var status map[string]interface{}
 	json.Unmarshal(statusData, &status)
 	assert.Equal(t, "idle", status["activity"]) // session-start sets idle activity
-	assert.Nil(t, status["status"])              // legacy field removed
+	assert.Nil(t, status["status"])             // legacy field removed
 
 	// Test SessionEnd
 	data = map[string]interface{}{
@@ -121,6 +121,34 @@ func TestProcessHookData_SessionEvents(t *testing.T) {
 
 	statusData, _ = os.ReadFile(statusPath)
 	json.Unmarshal(statusData, &status)
-	assert.Equal(t, "stopped", status["phase"])  // session-end sets stopped phase
-	assert.Nil(t, status["status"])               // legacy field removed
+	assert.Equal(t, "stopped", status["phase"]) // session-end sets stopped phase
+	assert.Nil(t, status["status"])             // legacy field removed
+}
+
+func TestProcessHookData_CodexCompletion(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+	log.SetLogPath(filepath.Join(tmpDir, "agent.log"))
+
+	hookDialect = "codex"
+
+	data := map[string]interface{}{
+		"type":  "agent-turn-complete",
+		"title": "Implemented telemetry wiring",
+	}
+	jsonData, _ := json.Marshal(data)
+
+	err := processHookData(jsonData)
+	require.NoError(t, err)
+
+	statusPath := filepath.Join(tmpDir, "agent-info.json")
+	statusData, err := os.ReadFile(statusPath)
+	require.NoError(t, err)
+
+	var status map[string]interface{}
+	err = json.Unmarshal(statusData, &status)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", status["activity"])
 }

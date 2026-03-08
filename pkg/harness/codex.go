@@ -17,6 +17,7 @@ package harness
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +42,7 @@ func (c *Codex) AdvancedCapabilities() api.HarnessAdvancedCapabilities {
 		},
 		Telemetry: api.HarnessTelemetryCapabilities{
 			EnabledConfig: api.CapabilityField{Support: api.SupportYes},
-			NativeEmitter: api.CapabilityField{Support: api.SupportPartial, Reason: "Telemetry is file-config based and not fully wired by Scion"},
+			NativeEmitter: api.CapabilityField{Support: api.SupportYes},
 		},
 		Prompts: api.HarnessPromptCapabilities{
 			SystemPrompt:      api.CapabilityField{Support: api.SupportNo, Reason: "System prompt injection is not implemented for this harness"},
@@ -82,7 +83,19 @@ func (c *Codex) HasSystemPrompt(agentHome string) bool {
 }
 
 func (c *Codex) Provision(ctx context.Context, agentName, agentHome, agentWorkspace string) error {
-	return nil
+	agentDir := filepath.Dir(agentHome)
+	scionAgentPath := filepath.Join(agentDir, "scion-agent.json")
+
+	var telemetryCfg *api.TelemetryConfig
+	if data, err := os.ReadFile(scionAgentPath); err == nil {
+		var cfg api.ScionConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("failed to parse scion-agent.json: %w", err)
+		}
+		telemetryCfg = cfg.Telemetry
+	}
+
+	return c.ApplyTelemetrySettings(agentHome, telemetryCfg, nil)
 }
 
 func (c *Codex) GetEmbedDir() string {
@@ -101,6 +114,10 @@ func (c *Codex) GetTelemetryEnv() map[string]string {
 	// Codex uses a TOML config file for telemetry, not env vars.
 	// File-based injection is handled via PropagateFiles.
 	return nil
+}
+
+func (c *Codex) ApplyTelemetrySettings(agentHome string, telemetry *api.TelemetryConfig, env map[string]string) error {
+	return c.reconcileConfig(agentHome, telemetry, env)
 }
 
 func (c *Codex) InjectAgentInstructions(agentHome string, content []byte) error {

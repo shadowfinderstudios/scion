@@ -698,6 +698,18 @@ func TestStatusHandler_NotificationSetsWaitingForInput(t *testing.T) {
 	assert.Equal(t, "waiting_for_input", info.Activity, "notification should set waiting_for_input")
 }
 
+func TestStatusHandler_ResponseCompleteSetsCompleted(t *testing.T) {
+	tmpDir := t.TempDir()
+	statusPath := filepath.Join(tmpDir, "agent-info.json")
+	h := &StatusHandler{StatusPath: statusPath}
+
+	err := h.Handle(&hooks.Event{Name: hooks.EventResponseComplete, Dialect: "codex"})
+	require.NoError(t, err)
+
+	info := readAgentInfo(t, statusPath)
+	assert.Equal(t, "completed", info.Activity, "response-complete should set completed")
+}
+
 // agentInfoFields is a test-only struct for reading fields from agent-info.json.
 type agentInfoFields struct {
 	Phase    string `json:"phase,omitempty"`

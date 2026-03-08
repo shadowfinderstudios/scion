@@ -264,6 +264,9 @@ func eventToPhaseActivity(event *hooks.Event) *eventResult {
 	case hooks.EventToolEnd, hooks.EventAgentEnd:
 		return &eventResult{activity: state.ActivityIdle}
 
+	case hooks.EventResponseComplete:
+		return &eventResult{activity: state.ActivityCompleted}
+
 	case hooks.EventNotification:
 		return &eventResult{activity: state.ActivityWaitingForInput}
 
