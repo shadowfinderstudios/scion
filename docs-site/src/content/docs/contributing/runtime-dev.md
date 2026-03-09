@@ -78,7 +78,7 @@ Add your new runtime to the `GetRuntime` factory in `pkg/runtime/factory.go`. Th
 ## Key Considerations
 
 ### Workspace Isolation
-The runtime is responsible for ensuring that the agent's `/workspace` is isolated. For local runtimes, this is typically done via a bind mount to a dedicated git worktree. For remote runtimes, you may need to implement a sync strategy using `mutagen`, `rsync`, or a shared volume.
+The runtime is responsible for ensuring that the agent's `/workspace` is isolated. For local runtimes, this is typically done via a bind mount to a dedicated git worktree. For remote runtimes, you may need to implement a sync strategy using `rsync`, tar snapshots, or a shared volume.
 
 ### Credential Injection
 Secrets and credentials provided in `RunConfig.ResolvedSecrets` must be injected into the container.

@@ -41,10 +41,10 @@ var syncCmd = &cobra.Command{
 	Short: "Sync agent workspace",
 	Long: `Triggers a synchronization of the workspace for the specified agent.
 
-In solo mode, behavior depends on the configured sync mode (e.g., mutagen or tar).
+In solo mode, uses tar-based snapshot sync.
 In hosted mode, syncs via the Hub using signed URLs for direct storage access.
 
-For tar sync and hosted mode, direction (to or from) must be specified.
+Direction (to or from) must be specified.
 
 Examples:
   # Sync workspace FROM remote agent to local

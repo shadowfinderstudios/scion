@@ -617,7 +617,7 @@ runtimes:
     host: "unix:///var/run/docker.sock"
     env:
       DOCKER_TLS_VERIFY: "1"
-    sync: "mutagen"
+    sync: "tar"
   container:
     type: container
   k8s-prod:

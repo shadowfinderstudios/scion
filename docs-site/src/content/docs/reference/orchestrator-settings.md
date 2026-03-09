@@ -102,7 +102,7 @@ runtimes:
 | `host` | string | (Docker/Podman) The daemon socket or TCP address. Optional for Podman (defaults to CLI). |
 | `context` | string | (Kubernetes) The kubectl context name. |
 | `namespace` | string | (Kubernetes) The target namespace. |
-| `sync` | string | File sync strategy (e.g., `tar`, `mutagen`). |
+| `sync` | string | File sync strategy (e.g., `tar`). |
 | `gke` | bool | (Kubernetes) Enable GKE-specific features (e.g., Workload Identity). Default: `false`. |
 | `env` | map | Environment variables to set for the runtime. |
 

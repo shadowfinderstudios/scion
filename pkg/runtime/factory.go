@@ -123,11 +123,6 @@ func GetRuntime(grovePath string, profileName string) Runtime {
 		if rtConfig.Namespace != "" {
 			rt.DefaultNamespace = rtConfig.Namespace
 		}
-		if rtConfig.Sync != "" {
-			rt.SyncMode = rtConfig.Sync
-		} else {
-			rt.SyncMode = "tar" // Implicit default
-		}
 		rt.GKEMode = rtConfig.GKE
 		return rt
 	}

@@ -46,7 +46,7 @@ To use the Kubernetes runtime, you need to configure the `kubernetes` section in
 ## Execution Flow
 
 1.  **Start**: When you run `scion start`, Scion connects to the cluster and creates a Pod for the agent.
-2.  **Sync**: Scion uses `mutagen` (if configured) or direct volume mounts (if local) to sync the workspace. *Note: Remote volume syncing is currently in active development.*
+2.  **Sync**: Scion uses tar-based snapshot sync to transfer the workspace to the Pod. *Note: Remote volume syncing is currently in active development.*
 3.  **Attach**: `scion attach` streams the TTY from the container running in the Pod.
 4.  **Stop**: `scion stop` deletes the Pod but preserves the workspace data if persistent volumes are configured.
 

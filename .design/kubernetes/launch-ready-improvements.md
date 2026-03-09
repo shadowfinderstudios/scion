@@ -42,9 +42,7 @@ However, compared to local runtimes, there are major parity and production-readi
 
 ### Sync modes
 - `tar` snapshot sync to/from pod is implemented over `pods/exec` streaming.
-- `mutagen` mode is implemented, with creation/recovery of workspace/home sessions.
 - GCS volume sync metadata (`scion.gcs_volumes`) is supported for `sync to/from`.
-<!-- Feedback - mutagen was never working and should be removed -->
 ### Runtime operations
 - `List`, `GetLogs`, `Attach`, `Exec`, `Delete`, `Stop`, `GetWorkspacePath` exist and are wired.
 - Attach includes terminal raw mode and resize support.
@@ -92,7 +90,7 @@ This can cause lifecycle failures for agents created outside default namespace.
 
 ## 6) Local workspace parity: **Different model, acceptable but underdeveloped**
 - Local runtimes use direct bind mounts for live local filesystem semantics.
-- Kubernetes uses `EmptyDir` + sync (tar/mutagen), which is expected for remote clusters.
+- Kubernetes uses `EmptyDir` + tar sync, which is expected for remote clusters.
 - Current sync model lacks stronger resumability/incrementality/observability expected for production parity.
 
 ## 7) Operational hardening parity: **Below local runtimes**
@@ -196,7 +194,6 @@ Deliverables:
 1. Robust sync engine behavior
 - Add retry/backoff and better error classification for tar/exec stream failures.
 - Add checksum/incremental sync optimization for tar mode (or document limits clearly).
-- Mutagen lifecycle reliability improvements (session recovery, stale session cleanup, explicit status reporting).
 
 2. Pod spec hardening
 - Security context defaults (runAsUser/fsGroup where compatible with image/user model).
