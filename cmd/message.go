@@ -241,8 +241,7 @@ func sendMessageViaHub(hubCtx *HubContext, agentName string, message string, int
 	// Resolve sender identity for structured messages
 	sender := resolveSenderIdentity(hubCtx)
 
-	// Grove-scoped broadcast: use the Hub's broadcast endpoint (single API call).
-	// The Hub handles fan-out via the message broker or direct dispatch.
+	// Grove-scoped broadcast: list running agents, then fan-out individually.
 	if broadcast && !all {
 		groveID, err := GetGroveID(hubCtx)
 		if err != nil {
@@ -250,21 +249,42 @@ func sendMessageViaHub(hubCtx *HubContext, agentName string, message string, int
 		}
 		agentSvc := hubCtx.Client.GroveAgents(groveID)
 
-		if !isJSONOutput() {
-			fmt.Println("Broadcasting message to grove agents via Hub...")
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		msg := buildStructuredMessage(sender, "grove:broadcast", message)
-		if err := agentSvc.BroadcastMessage(ctx, msg, interrupt); err != nil {
-			return wrapHubError(fmt.Errorf("failed to broadcast message via Hub: %w", err))
+		resp, err := agentSvc.List(ctx, &hubclient.ListAgentsOptions{Status: "running"})
+		if err != nil {
+			return wrapHubError(fmt.Errorf("failed to list agents via Hub: %w", err))
+		}
+
+		if len(resp.Agents) == 0 {
+			fmt.Println("No running agents found to broadcast to.")
+			return nil
 		}
 
 		if !isJSONOutput() {
-			fmt.Println("Broadcast message sent via Hub.")
+			fmt.Printf("Broadcasting message to %d agents...\n", len(resp.Agents))
 		}
+
+		var wg sync.WaitGroup
+		for _, a := range resp.Agents {
+			wg.Add(1)
+			go func(name string) {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+
+				msg := buildStructuredMessage(sender, "agent:"+name, message)
+				if err := agentSvc.SendStructuredMessage(ctx, name, msg, interrupt, false); err != nil {
+					fmt.Printf("Warning: failed to send message to agent '%s' via Hub: %s\n", name, err)
+					return
+				}
+				if !isJSONOutput() {
+					fmt.Printf("Message delivered to agent '%s' via Hub.\n", name)
+				}
+			}(a.Name)
+		}
+		wg.Wait()
 		return nil
 	}
 

@@ -774,15 +774,20 @@ func TestAppendExtraInstructions(t *testing.T) {
 		}
 	})
 
-	t.Run("git true with empty embed file returns unchanged", func(t *testing.T) {
-		// The embedded agents-git.md is currently empty, so no content should be appended
+	t.Run("git true appends agents-git.md content", func(t *testing.T) {
 		result := appendExtraInstructions(base, true, nil)
-		if string(result) != string(base) {
-			t.Errorf("expected unchanged content when embed is empty, got %q", string(result))
+		if string(result) == string(base) {
+			t.Errorf("expected content to be appended for git=true")
+		}
+		if !strings.Contains(string(result), string(base)) {
+			t.Errorf("result should contain base content")
+		}
+		if !strings.Contains(string(result), "Git Workflow Protocol") {
+			t.Errorf("result should contain git workflow content from agents-git.md")
 		}
 	})
 
-	t.Run("hub enabled with empty embed file returns unchanged", func(t *testing.T) {
+	t.Run("hub enabled appends agents-hub.md content", func(t *testing.T) {
 		enabled := true
 		settings := &config.VersionedSettings{
 			Hub: &config.V1HubClientConfig{
@@ -790,8 +795,14 @@ func TestAppendExtraInstructions(t *testing.T) {
 			},
 		}
 		result := appendExtraInstructions(base, false, settings)
-		if string(result) != string(base) {
-			t.Errorf("expected unchanged content when embed is empty, got %q", string(result))
+		if string(result) == string(base) {
+			t.Errorf("expected content to be appended for hub enabled")
+		}
+		if !strings.Contains(string(result), string(base)) {
+			t.Errorf("result should contain base content")
+		}
+		if !strings.Contains(string(result), "Scion CLI Operating Instructions") {
+			t.Errorf("result should contain hub instructions from agents-hub.md")
 		}
 	})
 
