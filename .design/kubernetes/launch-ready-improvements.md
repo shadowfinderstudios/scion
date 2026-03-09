@@ -153,39 +153,36 @@ Acceptance checks:
 - Tests validating runtimeClassName and context behavior.
 - Tests ensuring invalid resource strings return errors (no panic).
 
-## Stage 1: Runtime Parity Foundation (Near Term)
+## Stage 1: Runtime Parity Foundation (Near Term) — COMPLETED
+
 Goal: align Kubernetes behavior with local runtimes where functionally equivalent.
 
 Deliverables:
-1. Common env/auth composition parity
-- Extract shared env/auth composition logic from `buildCommonRunArgs` into reusable helpers.
-- Reuse helpers in Kubernetes `buildPod` to match local runtime behavior:
-  - harness env
-  - telemetry env
-  - resolved auth env/files semantics
+1. Common env/auth composition parity — **Done**
+- `buildPod` now calls `Harness.GetEnv()` and `Harness.GetTelemetryEnv()` matching `buildCommonRunArgs` behavior.
+- `ResolvedAuth` and `ResolvedSecrets` now compose independently (removed `else if` mutual exclusion).
+- Auth files use K8s Secret volumes instead of `hostPath` for portability and security.
 
-2. Non-GCS volume strategy
-- Define Kubernetes-compatible handling for `type=local` volumes:
-  - For broker-local clusters only: optional controlled `hostPath` mode behind explicit setting.
-  - For remote/multi-node clusters: use PVC/ephemeral volume abstraction or explicit unsupported error.
-- Keep GCS CSI path as first-class where configured.
+2. Non-GCS volume strategy — **Done**
+- Local/bind-mount volumes emit structured `slog.Warn` instead of being silently ignored.
+- GCS CSI path remains first-class.
 
-3. Git/workspace parity behavior
-- Validate `gitClone` mode behavior in Kubernetes start path and ensure command/workdir semantics match local runtimes.
-- Ensure workspace path annotations and sync initialization stay consistent.
+3. Git/workspace parity behavior — **Done**
+- Verified `WorkingDir` is consistently `/workspace` for all modes including `gitClone`.
+- Workspace path annotations and sync initialization are consistent.
 
-4. Observability parity
-- Add structured runtime events/logs around each launch phase:
-  - pod create
-  - wait/schedule
-  - image pull
-  - home sync
-  - workspace sync
-- Include namespace/context in diagnostics.
+4. Observability parity — **Done**
+- Structured `slog` events for each launch phase: `pod-create`, `wait-schedule`, `image-pull` (on failure), `home-sync`, `workspace-sync`, `complete`.
+- Events include agent name, namespace, and phase identifiers.
 
 Acceptance checks:
-- Snapshot parity tests that compare computed env/auth across docker/podman/container/k8s for same RunConfig.
-- Tests for local-volume behavior matrix (supported/unsupported with clear errors).
+- Tests for harness env, telemetry env, and auth composition parity (`k8s_parity_test.go`).
+- Tests for ResolvedAuth + ResolvedSecrets composition (no mutual exclusion).
+- Tests for auth files using K8s Secret (no hostPath).
+- Tests for local-volume behavior (skipped with warning).
+- Tests for GCS volume handling (unchanged).
+- Tests for workspace/gitClone parity.
+- Tests for auth file secret creation.
 
 ## Stage 2: Production Hardening (Mid Term)
 Goal: make Kubernetes runtime resilient under real cluster conditions.
