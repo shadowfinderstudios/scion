@@ -551,6 +551,8 @@ func (s *Server) createAgentInGrove(
 				s.agentLifecycleLog.Warn("Failed to update agent status to provisioning", "error", err)
 			}
 
+			s.events.PublishAgentCreated(ctx, agent)
+
 			expires := time.Now().Add(SignedURLExpiry)
 			s.enrichAgent(ctx, agent, grove, nil)
 
@@ -625,6 +627,8 @@ func (s *Server) createAgentInGrove(
 					if err := s.store.UpdateAgent(ctx, agent); err != nil {
 						s.agentLifecycleLog.Warn("Failed to update agent phase for env-gather", "error", err)
 					}
+
+					s.events.PublishAgentCreated(ctx, agent)
 
 					s.enrichAgent(ctx, agent, grove, nil)
 					hubEnvGather := s.buildEnvGatherResponse(ctx, agent, envReqs)
