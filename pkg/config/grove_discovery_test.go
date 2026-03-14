@@ -451,6 +451,55 @@ func TestDiscoverGroves_GitGroveExternalEmptyAgents(t *testing.T) {
 	}
 }
 
+func TestDiscoverGroves_GitGroveWithExternalConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	os.MkdirAll(filepath.Join(tmpHome, ".scion"), 0755)
+
+	// Create a git grove in the new layout: .scion/ (config) + agents/ (homes)
+	groveDir := filepath.Join(tmpHome, ".scion", "grove-configs", "newrepo__ccdd1122")
+	scionDir := filepath.Join(groveDir, ".scion")
+	agentsDir := filepath.Join(groveDir, "agents", "worker1", "home")
+	os.MkdirAll(scionDir, 0755)
+	os.MkdirAll(agentsDir, 0755)
+
+	groves, err := DiscoverGroves()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var gitGrove *GroveInfo
+	for i := range groves {
+		if groves[i].Name == "newrepo" {
+			gitGrove = &groves[i]
+			break
+		}
+	}
+	if gitGrove == nil {
+		t.Fatal("expected to find git grove with external config")
+	}
+	if gitGrove.Type != GroveTypeGit {
+		t.Errorf("expected GroveTypeGit, got %s", gitGrove.Type)
+	}
+	if gitGrove.Status != GroveStatusOK {
+		t.Errorf("expected status ok, got %s", gitGrove.Status)
+	}
+	if gitGrove.AgentCount != 1 {
+		t.Errorf("expected 1 agent, got %d", gitGrove.AgentCount)
+	}
+	if gitGrove.ConfigPath != scionDir {
+		t.Errorf("expected ConfigPath %q, got %q", scionDir, gitGrove.ConfigPath)
+	}
+	// AgentsDir() should point to the sibling agents/ dir
+	wantAgentsDir := filepath.Join(groveDir, "agents")
+	if got := gitGrove.AgentsDir(); got != wantAgentsDir {
+		t.Errorf("AgentsDir() = %q, want %q", got, wantAgentsDir)
+	}
+}
+
 func TestDiscoverGroves_GroveConfigNoScionNoAgents(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")

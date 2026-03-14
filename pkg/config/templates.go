@@ -327,8 +327,11 @@ func FindTemplateInGrovePath(name, grovePath string) (*Template, error) {
 		return nil, fmt.Errorf("template path %s not found or not a directory", name)
 	}
 
+	// Resolve config dir: for git groves with split storage, templates live externally.
+	configDir := GetGroveConfigDir(grovePath)
+
 	// Check grove-specific templates directory
-	groveTemplatesDir := filepath.Join(grovePath, "templates")
+	groveTemplatesDir := filepath.Join(configDir, "templates")
 	path := filepath.Join(groveTemplatesDir, name)
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return &Template{Name: name, Path: path, Scope: "grove"}, nil

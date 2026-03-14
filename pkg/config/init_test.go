@@ -313,7 +313,7 @@ func TestInitProject_EmptyTemplatesDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockRuntimeDetection(t, "docker")
 
-	// Override HOME for global templates
+	// Override HOME for global templates and external grove-config dirs
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
@@ -325,14 +325,19 @@ func TestInitProject_EmptyTemplatesDir(t *testing.T) {
 		t.Fatalf("InitProject failed: %v", err)
 	}
 
-	// Verify templates/ directory exists
-	templatesDir := filepath.Join(projectDir, "templates")
+	// For git groves (CWD is inside a git repo during tests), templates land in
+	// the external config dir. For non-git groves they land inside projectDir.
+	// Use GetGroveConfigDir to find the canonical location.
+	configDir := GetGroveConfigDir(projectDir)
+
+	// Verify templates/ directory exists in the config dir
+	templatesDir := filepath.Join(configDir, "templates")
 	if info, err := os.Stat(templatesDir); err != nil || !info.IsDir() {
 		t.Fatalf("expected templates/ directory to exist at %s", templatesDir)
 	}
 
 	// Verify templates/default/ does NOT exist (default template lives in global grove only)
-	defaultTplDir := filepath.Join(projectDir, "templates", "default")
+	defaultTplDir := filepath.Join(configDir, "templates", "default")
 	if _, err := os.Stat(defaultTplDir); !os.IsNotExist(err) {
 		t.Errorf("expected templates/default/ to NOT exist at project level, but it does at %s", defaultTplDir)
 	}
@@ -594,7 +599,10 @@ func TestInitProject_UsesDetectedRuntime(t *testing.T) {
 	}
 
 	// Grove settings should not contain profiles or runtimes; those live in global settings.
-	data, err := os.ReadFile(filepath.Join(projectDir, "settings.yaml"))
+	// For git groves settings.yaml is in the external config dir; use GetGroveConfigDir
+	// to find the canonical location regardless of grove type.
+	configDir := GetGroveConfigDir(projectDir)
+	data, err := os.ReadFile(filepath.Join(configDir, "settings.yaml"))
 	if err != nil {
 		t.Fatalf("failed to read settings.yaml: %v", err)
 	}

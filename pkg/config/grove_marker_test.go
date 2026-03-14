@@ -291,6 +291,41 @@ func TestReadGroveID_NotExist(t *testing.T) {
 	}
 }
 
+func TestGetGitGroveExternalConfigDir(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	projectDir := filepath.Join(t.TempDir(), "my-repo", ".scion")
+	os.MkdirAll(projectDir, 0755)
+	WriteGroveID(projectDir, "550e8400-e29b-41d4-a716-446655440000")
+
+	got, err := GetGitGroveExternalConfigDir(projectDir)
+	if err != nil {
+		t.Fatalf("GetGitGroveExternalConfigDir failed: %v", err)
+	}
+
+	want := filepath.Join(tmpHome, ".scion", "grove-configs", "my-repo__550e8400", ".scion")
+	if got != want {
+		t.Errorf("GetGitGroveExternalConfigDir() = %q, want %q", got, want)
+	}
+}
+
+func TestGetGitGroveExternalConfigDir_NoGroveID(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	projectDir := filepath.Join(t.TempDir(), "my-repo", ".scion")
+	os.MkdirAll(projectDir, 0755)
+
+	got, err := GetGitGroveExternalConfigDir(projectDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty string for missing grove-id, got %q", got)
+	}
+}
+
 func TestGetGitGroveExternalAgentsDir(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

@@ -185,9 +185,37 @@ func WriteGroveID(projectDir string, groveID string) error {
 	return os.WriteFile(filepath.Join(projectDir, "grove-id"), []byte(groveID+"\n"), 0644)
 }
 
+// GetGitGroveExternalConfigDir returns the external config directory for a git grove.
+// Git groves store settings and templates externally at ~/.scion/grove-configs/<slug>__<uuid>/.scion/
+// while keeping worktrees in-repo.
+// Returns ("", nil) if the grove-id file does not exist (not yet initialized for split storage).
+func GetGitGroveExternalConfigDir(projectDir string) (string, error) {
+	groveID, err := ReadGroveID(projectDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	groveName := GetGroveName(projectDir)
+	groveSlug := api.Slugify(groveName)
+	marker := &GroveMarker{
+		GroveID:   groveID,
+		GroveName: groveName,
+		GroveSlug: groveSlug,
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, GlobalDir, "grove-configs", marker.DirName(), DotScion), nil
+}
+
 // GetGitGroveExternalAgentsDir returns the external agents directory for a git grove.
 // Git groves store agent homes externally at ~/.scion/grove-configs/<slug>__<uuid>/agents/
-// while keeping worktrees and config in-repo.
+// while keeping worktrees in-repo.
 // Returns ("", nil) if the grove-id file does not exist (not yet initialized for split storage).
 func GetGitGroveExternalAgentsDir(projectDir string) (string, error) {
 	groveID, err := ReadGroveID(projectDir)

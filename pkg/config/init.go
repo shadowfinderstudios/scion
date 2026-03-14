@@ -465,8 +465,9 @@ func initExternalGrove(projectDir string, opt InitProjectOpts) error {
 }
 
 // initInRepoGrove creates a git grove with .scion as a directory in the repo.
-// It also creates an external directory for agent homes (split storage)
-// to prevent cross-agent secret access via container mounts.
+// Settings and templates are stored externally at ~/.scion/grove-configs/<slug>__<uuid>/.scion/
+// and agent homes are stored externally at ~/.scion/grove-configs/<slug>__<uuid>/agents/.
+// Only the in-repo agents/ directory (for git worktrees) remains inside the repo.
 func initInRepoGrove(projectDir string, opt InitProjectOpts) error {
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		return fmt.Errorf("failed to create settings directory: %w", err)
@@ -484,6 +485,15 @@ func initInRepoGrove(projectDir string, opt InitProjectOpts) error {
 		}
 	}
 
+	// Create external config dir for settings/templates
+	externalConfigDir, err := GetGitGroveExternalConfigDir(projectDir)
+	if err != nil {
+		return fmt.Errorf("failed to compute external config path: %w", err)
+	}
+	if err := os.MkdirAll(externalConfigDir, 0755); err != nil {
+		return fmt.Errorf("failed to create external config directory: %w", err)
+	}
+
 	// Create external agents directory for agent homes
 	externalAgentsDir, err := GetGitGroveExternalAgentsDir(projectDir)
 	if err != nil {
@@ -495,17 +505,23 @@ func initInRepoGrove(projectDir string, opt InitProjectOpts) error {
 		}
 	}
 
-	return ensureGroveDirs(projectDir, opt)
-}
-
-// ensureGroveDirs creates the standard grove subdirectories and seeds settings.
-func ensureGroveDirs(projectDir string, opt InitProjectOpts) error {
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		return fmt.Errorf("failed to create grove directory: %w", err)
+	// Create in-repo agents dir for git worktrees only
+	if err := os.MkdirAll(filepath.Join(projectDir, "agents"), 0755); err != nil {
+		return fmt.Errorf("failed to create agents directory: %w", err)
 	}
 
-	// Check if any settings file exists (YAML or JSON)
-	settingsPath := GetSettingsPath(projectDir)
+	// Seed settings.yaml and templates/ in the external config dir
+	return ensureGroveConfigFiles(externalConfigDir, opt)
+}
+
+// ensureGroveConfigFiles creates settings.yaml and templates/ in configDir.
+// It does not create the agents/ directory — that is handled separately.
+func ensureGroveConfigFiles(configDir string, opt InitProjectOpts) error {
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create grove config directory: %w", err)
+	}
+
+	settingsPath := GetSettingsPath(configDir)
 	if settingsPath == "" {
 		if !opt.SkipRuntimeCheck {
 			if _, err := DetectLocalRuntime(); err != nil {
@@ -517,20 +533,27 @@ func ensureGroveDirs(projectDir string, opt InitProjectOpts) error {
 		if err != nil {
 			return fmt.Errorf("failed to read default grove settings: %w", err)
 		}
-		newSettingsPath := filepath.Join(projectDir, "settings.yaml")
+		newSettingsPath := filepath.Join(configDir, "settings.yaml")
 		if err := os.WriteFile(newSettingsPath, defaultSettings, 0644); err != nil {
 			return fmt.Errorf("failed to seed settings.yaml: %w", err)
 		}
 	}
 
-	templatesDir := filepath.Join(projectDir, "templates")
-	agentsDir := filepath.Join(projectDir, "agents")
-
-	if err := os.MkdirAll(templatesDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(configDir, "templates"), 0755); err != nil {
 		return fmt.Errorf("failed to create templates directory: %w", err)
 	}
 
-	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+	return nil
+}
+
+// ensureGroveDirs creates the standard grove subdirectories and seeds settings.
+// Used for non-git groves and global grove where config and agents share the same dir.
+func ensureGroveDirs(projectDir string, opt InitProjectOpts) error {
+	if err := ensureGroveConfigFiles(projectDir, opt); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Join(projectDir, "agents"), 0755); err != nil {
 		return fmt.Errorf("failed to create agents directory: %w", err)
 	}
 

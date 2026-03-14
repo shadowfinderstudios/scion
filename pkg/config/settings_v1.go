@@ -510,6 +510,8 @@ type V1ProfileConfig struct {
 
 // resolveEffectiveGrovePath resolves the effective grove path for settings loading.
 // Shared by both LoadSettingsKoanf and LoadVersionedSettings.
+// For git groves with split storage, this redirects to the external config dir
+// so that settings are loaded from ~/.scion/grove-configs/<slug>__<uuid>/.scion/.
 func resolveEffectiveGrovePath(grovePath string) string {
 	effectiveGrovePath := grovePath
 	if effectiveGrovePath == "" {
@@ -518,6 +520,9 @@ func resolveEffectiveGrovePath(grovePath string) string {
 		}
 	} else if effectiveGrovePath == "global" || effectiveGrovePath == "home" {
 		effectiveGrovePath = ""
+	}
+	if effectiveGrovePath != "" {
+		effectiveGrovePath = GetGroveConfigDir(effectiveGrovePath)
 	}
 	return effectiveGrovePath
 }

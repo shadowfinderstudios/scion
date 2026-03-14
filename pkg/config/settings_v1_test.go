@@ -782,8 +782,24 @@ func TestResolveEffectiveGrovePath_Global(t *testing.T) {
 }
 
 func TestResolveEffectiveGrovePath_Explicit(t *testing.T) {
+	// A plain .scion path with no grove-id → returned as-is (non-git grove)
 	result := resolveEffectiveGrovePath("/some/path/.scion")
 	assert.Equal(t, "/some/path/.scion", result)
+}
+
+func TestResolveEffectiveGrovePath_GitGrove(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Simulate a git grove with grove-id → should redirect to external config dir
+	projectDir := filepath.Join(t.TempDir(), "my-repo", ".scion")
+	os.MkdirAll(projectDir, 0755)
+	WriteGroveID(projectDir, "550e8400-e29b-41d4-a716-446655440000")
+
+	result := resolveEffectiveGrovePath(projectDir)
+
+	want := filepath.Join(tmpHome, ".scion", "grove-configs", "my-repo__550e8400", ".scion")
+	assert.Equal(t, want, result)
 }
 
 // --- versionedEnvKeyMapper tests ---

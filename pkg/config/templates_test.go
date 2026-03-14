@@ -547,6 +547,39 @@ func TestFindTemplateInGrovePath(t *testing.T) {
 	})
 }
 
+func TestFindTemplateInGrovePath_GitGroveExternalConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Simulate a git grove: in-repo .scion/ with grove-id, and external config dir
+	// with templates stored in ~/.scion/grove-configs/<slug>__<uuid>/.scion/templates/
+	projectDir := filepath.Join(t.TempDir(), "my-git-project", ".scion")
+	os.MkdirAll(projectDir, 0755)
+	if err := WriteGroveID(projectDir, "550e8400-e29b-41d4-a716-446655440000"); err != nil {
+		t.Fatal(err)
+	}
+
+	externalConfigDir, err := GetGitGroveExternalConfigDir(projectDir)
+	if err != nil {
+		t.Fatalf("GetGitGroveExternalConfigDir failed: %v", err)
+	}
+	externalTplDir := filepath.Join(externalConfigDir, "templates", "my-tpl")
+	if err := os.MkdirAll(externalTplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tpl, err := FindTemplateInGrovePath("my-tpl", projectDir)
+	if err != nil {
+		t.Fatalf("FindTemplateInGrovePath failed: %v", err)
+	}
+	if tpl.Path != externalTplDir {
+		t.Errorf("expected template path %q, got %q", externalTplDir, tpl.Path)
+	}
+	if tpl.Scope != "grove" {
+		t.Errorf("expected scope 'grove', got %q", tpl.Scope)
+	}
+}
+
 func TestGetTemplateChainInGrove(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "scion-test-chain-grove-*")
 	if err != nil {

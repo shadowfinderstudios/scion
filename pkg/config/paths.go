@@ -155,12 +155,23 @@ func GetGlobalDir() (string, error) {
 	return filepath.Join(home, GlobalDir), nil
 }
 
+// GetGroveConfigDir returns the directory where grove config files (settings.yaml,
+// templates/) live. For git groves with split storage (grove-id file exists), this
+// is the external path under ~/.scion/grove-configs/. For all other groves
+// (non-git, global), projectDir is returned as-is since it is already the config dir.
+func GetGroveConfigDir(projectDir string) string {
+	if extDir, err := GetGitGroveExternalConfigDir(projectDir); err == nil && extDir != "" {
+		return extDir
+	}
+	return projectDir
+}
+
 func GetProjectTemplatesDir() (string, error) {
 	p, err := GetProjectDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(p, "templates"), nil
+	return filepath.Join(GetGroveConfigDir(p), "templates"), nil
 }
 
 func GetGlobalTemplatesDir() (string, error) {
