@@ -62,165 +62,50 @@ If a template is found only locally, the user is prompted to upload it (or `--up
 
 ---
 
-## 3. Exploration: Approaches
+## 3. Selected Approach
 
-### Approach A: Broker-Reported Template Inventory
+After evaluating several approaches (see [Appendix: Rejected Approaches](#appendix-rejected-approaches)), the selected design uses **two complementary strategies**:
 
-**Concept**: Brokers periodically scan their local grove template directories and report the inventory to the Hub. The Hub stores this as a "known templates" list per grove-provider, without uploading the actual files.
+- **CLI path**: Auto-sync on grove link (Approach B)
+- **Web path**: In-container template sync via dummy agent (Approach C)
 
-**Flow**:
-1. Broker heartbeat (or grove link) includes a template manifest: `[{name, contentHash, harness}]`
-2. Hub stores this per GroveProvider (broker + grove combination)
-3. Web UI can display "templates available on broker X" for a grove
-4. When creating an agent, the Hub can see which templates exist locally on the target broker
-5. Users can trigger `sync` from the web UI to promote a broker-local template to Hub storage
+### 3.1 CLI: Auto-Sync on Grove Link
 
-**Pros**:
-- Low friction: no upfront upload required
-- Honest about multi-broker variance (shows per-broker inventory)
-- Existing broker heartbeat infrastructure can carry this data
-- Templates remain authoritative on the filesystem
-
-**Cons**:
-- Multi-broker inconsistency is visible but not solved
-- Templates not actually on Hub, so cross-broker agent dispatch can't use them
-- Web UI can show templates but can't inspect their contents without broker cooperation
-- Adds complexity to the GroveProvider model
-
-**Open Questions**:
-- Should the manifest include file listings or just template names + hashes?
-- How does this interact with the template cache on brokers?
-- Should the Hub flag inconsistencies (template X on broker A but not broker B)?
-
----
-
-### Approach B: Auto-Sync on Grove Link/Registration
-
-**Concept**: When a grove is linked to the Hub (`scion hub link`) or when a broker registers as a provider, automatically sync grove-local templates to the Hub at grove scope.
+**Concept**: When a grove is linked to the Hub (`scion hub link`), automatically detect and sync grove-local templates to the Hub at grove scope.
 
 **Flow**:
 1. `scion hub link` detects templates in `.scion/templates/`
-2. Each template is automatically uploaded to Hub at grove scope (same as `scion templates sync`)
-3. For linked groves: first broker to link seeds the Hub; subsequent brokers can pull from Hub
-4. For git groves: templates are synced when the grove is created from a git URL (requires cloning to discover templates)
+2. **Interactive mode**: User is prompted to confirm syncing discovered templates
+3. **Non-interactive mode** (`--non-interactive`): Template sync is skipped entirely
+4. Each confirmed template is uploaded to Hub at grove scope (same as `scion templates sync`)
+5. For linked groves: first broker to link seeds the Hub; subsequent brokers can pull from Hub
+6. For git groves: templates are synced when the grove is created from a git URL (requires cloning to discover templates)
 
-**Pros**:
-- Templates become Hub-native automatically
-- Cross-broker consistency solved: Hub is source of truth after initial sync
-- Web UI has full template content for display/editing
-- Works with existing sync infrastructure
+**Conflict handling**: If a grove-scoped template with the same name already exists on the Hub, the CLI warns the user and requires a `--force` flag to overwrite.
 
-**Cons**:
-- Which broker's version wins? First-write-wins may not be correct
-- Git groves require a clone to discover templates (expensive for `grove create`)
-- Users may not expect `hub link` to upload their templates
-- Ongoing drift: local edits aren't auto-synced (need a sync trigger)
-- Privacy/security: some grove templates may contain sensitive instructions
+**Bulk sync**: `scion templates sync --all` is available for explicit bulk upload at any time.
 
-**Open Questions**:
-- Should auto-sync be opt-in (`hub link --sync-templates`) or opt-out?
-- How to handle template conflicts when a second broker links with different versions?
-- Should there be a `scion templates sync --all` to bulk-sync all grove templates?
+### 3.2 Web: In-Container Template Sync
 
----
-
-### Approach C: Git-Integrated Template Discovery for Git Groves
-
-**Concept**: For git groves, the Hub clones/fetches the repository (shallow, sparse) to discover `.scion/templates/` and imports them. This leverages the fact that git groves already have a known remote URL.
+**Concept**: For all grove types, the web UI uses the existing agent infrastructure to discover and sync templates. This provides a universal mechanism that works regardless of grove type.
 
 **Flow**:
-1. On `scion hub grove create <url>`, Hub does a sparse checkout of just `.scion/templates/`
-2. Templates are registered at grove scope, with files uploaded to storage
-3. A webhook or periodic job re-syncs when the repo's `.scion/` directory changes
-4. For branches: each branch-scoped grove gets its own template set
+1. From the grove settings page, a "Load Templates" button launches a short-lived dummy agent in the grove
+2. The Hub execs into the agent container and runs `scion templates sync --all` via bash
+3. The synced templates become available on the Hub at grove scope
+4. The grove settings page displays a **read-only list** of loaded templates
+5. The agent creation form is **populated by available grove templates**
 
-**Pros**:
-- Zero CLI interaction needed: git push is the sync trigger
-- Templates are version-controlled alongside code (GitOps natural)
-- Branch-scoped groves get branch-appropriate templates
-- Hub can show template history via git log
+**Why this works universally**:
+- The agent container has the grove's filesystem mounted (whether linked, git-cloned, or hub-native)
+- The `scion` CLI inside the container has access to all local templates
+- No special git access or broker APIs needed from the Hub
 
-**Cons**:
-- Requires Hub to have git access (credentials, network)
-- Adds operational complexity (git clone, sparse checkout, webhooks)
-- Only works for git groves, not linked groves or hub-native groves
-- Latency: webhook-based sync is not instant
-- Repository may not have `.scion/templates/` committed (externalized groves don't)
-
-**Open Questions**:
-- Should the Hub have its own git credential management for this?
-- How does this interact with the existing git clone credentials (GITHUB_TOKEN)?
-- Is sparse checkout reliable enough across git providers?
-- What about private repos where the Hub server doesn't have direct access?
+**Hub-native groves**: These are the simplest case — templates are managed entirely on the Hub. The web UI can create/edit templates at grove scope directly without needing the in-container approach. Hub-native groves should take advantage of this direct path.
 
 ---
 
-### Approach D: Template Declaration in Grove Metadata
-
-**Concept**: Instead of syncing actual template files, groves declare their template requirements in metadata. Templates are referenced by name (or name + version), and the Hub resolves them from a registry.
-
-**Flow**:
-1. Grove metadata includes a `templates` field: `[{name: "code-reviewer", source: "grove", version: "latest"}]`
-2. The `source` field indicates where to find it: `"grove"` (this grove's storage), `"global"`, or a specific template ID
-3. CLI `scion templates declare <name>` adds to grove metadata
-4. Actual template content is synced separately (via push/sync)
-5. Web UI shows declared templates and their sync status
-
-**Pros**:
-- Clean separation of "what templates a grove uses" vs "where they're stored"
-- Works for all grove types
-- Grove metadata is lightweight (just names/refs)
-- Can reference global templates without copying
-
-**Cons**:
-- Two-step process (declare + sync) adds friction
-- Declaration can drift from actual template availability
-- Doesn't solve the fundamental problem of getting template content to the Hub
-
-**Open Questions**:
-- Is this just adding metadata without solving the real sync problem?
-- Could this be combined with another approach (e.g., A or B)?
-
----
-
-### Approach E: Hybrid - Broker Inventory + On-Demand Promotion
-
-**Concept**: Combine Approach A's discovery with on-demand sync. Brokers report what templates they have locally; the Hub makes these visible but lazily syncs content only when needed.
-
-**Flow**:
-1. Broker reports template inventory in heartbeat (name, hash, harness type)
-2. Hub stores inventory per GroveProvider and aggregates a "grove template catalog"
-3. Web UI shows available templates with sync status:
-   - "Available on broker(s)" (local only)
-   - "Synced to Hub" (uploaded and cached)
-   - "Inconsistent" (different versions across brokers)
-4. When a user selects a template from the web UI for agent creation:
-   - If already on Hub: use it directly
-   - If local-only: Hub requests the broker to upload it (broker-initiated sync)
-5. CLI `scion templates sync` still works for explicit upload
-6. Multi-broker conflict: Hub can prompt user to choose which broker's version to promote
-
-**Pros**:
-- Lazy: no upfront cost; only syncs what's actually used
-- Multi-broker awareness with clear conflict resolution
-- Works for linked groves naturally (broker already has the files)
-- Progressive: starts with visibility, adds full sync on demand
-- Web UI can show a complete picture without requiring all templates to be uploaded
-
-**Cons**:
-- First agent creation on a "local-only" template incurs sync delay
-- Requires broker to support "upload this template" API (new capability)
-- Complexity: multiple states to track and display
-- Git groves still need a mechanism to get templates onto a broker first
-
-**Open Questions**:
-- What's the API for Hub to request a broker to upload a specific template?
-- Should promotion be automatic (first use triggers sync) or manual (user clicks "sync to hub")?
-- How to handle the case where the broker that has the template is offline?
-
----
-
-## 4. Specific Challenges by Grove Type
+## 4. Challenges by Grove Type
 
 ### 4.1 Linked Groves
 
@@ -231,11 +116,7 @@ If a template is found only locally, the user is prompted to upload it (or `--up
 - Both brokers have `code-reviewer` but with different content
 - A user pushes a template from Broker A; later Broker B updates its local copy
 
-**Potential resolution strategies**:
-1. **First-write-wins**: First broker to sync sets the Hub version; subsequent syncs are no-ops unless forced
-2. **Content-hash comparison**: Hub tracks content hash; syncs only if hash differs; conflicts flagged for user resolution
-3. **Broker-authoritative**: Each broker's version is independent; Hub stores per-broker variants
-4. **Hub-authoritative**: Once synced to Hub, Hub version is pushed to all brokers (reverses flow)
+**Resolution strategy**: Warn on name conflicts and require `--force` to overwrite. The first broker to sync sets the Hub version; subsequent syncs from other brokers will see a conflict warning if their version differs.
 
 ### 4.2 Git Groves
 
@@ -248,26 +129,20 @@ If a template is found only locally, the user is prompted to upload it (or `--up
 
 **Key insight**: The recent externalization change (d0507b1) means git grove templates now live in `~/.scion/grove-configs/<slug>__<uuid>/.scion/templates/` on the broker, **not** in the repo. This means:
 - Git grove templates behave like linked grove templates from the broker's perspective
-- The "git-integrated discovery" (Approach C) would only find templates that are committed to the repo, not externalized ones
 - Agents running in git groves create their worktree from the repo clone, but template resolution uses the external config dir
 
-**Implication**: For git groves, Approach C alone is insufficient. The broker-inventory approach (A or E) better captures what templates are actually available.
+**Resolution**: The in-container sync approach (Section 3.2) works universally here — the dummy agent has access to both in-repo and externalized templates, and `scion templates sync --all` uploads everything it finds.
 
 ### 4.3 Hub-Native Groves
 
-**Simplest case**: Templates are managed entirely on the Hub. The web UI creates/edits templates at grove scope. No filesystem variance to reconcile.
+**Simplest case**: Templates are managed entirely on the Hub. The web UI creates/edits templates at grove scope directly. No filesystem variance to reconcile, no need for the in-container sync flow.
 
 ---
 
-## 5. CLI UX Considerations
+## 5. CLI UX Design
 
-### 5.1 Current `scion templates sync` Behavior
+### 5.1 Auto-Sync on `hub link` (Interactive)
 
-Today, `scion templates sync <name>` defaults to grove scope. This is correct behavior and should be preserved. The `--global` flag explicitly overrides to global scope.
-
-### 5.2 Proposed CLI Enhancements
-
-**Discovery hint on link**:
 ```
 $ scion hub link
 Grove linked to Hub: my-project (id: abc123)
@@ -277,10 +152,25 @@ Found 3 grove templates not yet synced to Hub:
   - security-auditor
   - docs-writer
 
-Run 'scion templates sync --all' to upload them, or sync individually.
+Sync these templates to the Hub? [Y/n] y
+
+Syncing grove templates to Hub...
+  code-reviewer:    uploaded (3 files, 2.1KB)
+  security-auditor: uploaded (4 files, 3.4KB)
+  docs-writer:      uploaded (3 files, 1.8KB)
+3 templates synced to grove scope.
 ```
 
-**Bulk sync**:
+In non-interactive mode, sync is skipped:
+```
+$ scion hub link --non-interactive
+Grove linked to Hub: my-project (id: abc123)
+Skipping template sync (non-interactive mode).
+Run 'scion templates sync --all' to upload grove templates.
+```
+
+### 5.2 Bulk Sync
+
 ```
 $ scion templates sync --all
 Syncing grove templates to Hub...
@@ -290,7 +180,17 @@ Syncing grove templates to Hub...
 3 templates synced to grove scope.
 ```
 
-**Status command**:
+### 5.3 Conflict Detection
+
+```
+$ scion templates sync code-reviewer
+Warning: template 'code-reviewer' already exists at grove scope on the Hub
+  (content hash mismatch: local=abc123, hub=def456)
+Use --force to overwrite the existing template.
+```
+
+### 5.4 Status Command
+
 ```
 $ scion templates status
 Grove: my-project (abc123)
@@ -303,43 +203,34 @@ default             yes      yes      synced (global)
 custom-gemini       no       yes      hub only
 ```
 
-### 5.3 Web UI Considerations
+### 5.5 Web UI Considerations
 
 The web UI needs to:
-1. Show templates available for a grove (both Hub-stored and broker-reported)
-2. Allow creating agents with grove-scoped templates
-3. Provide a way to create/edit grove templates inline
-4. Show sync status for templates known to be on brokers but not uploaded
-5. Allow promoting a broker-local template to Hub storage
+1. Show a read-only list of loaded templates in the grove settings page
+2. Provide a "Load Templates" button that triggers in-container sync
+3. Populate the agent creation form with available grove templates
+4. For hub-native groves, support direct template creation/editing inline
 
 ---
 
-## 6. Recommendation
+## 6. Implementation Plan
 
-### Phased Approach
-
-**Phase 1: CLI improvements (low effort, high value)**
+### Phase 1: CLI Improvements (low effort, high value)
 - Add `scion templates sync --all` for bulk grove template sync
 - Add `scion templates status` to show sync state between local and Hub
-- Add discovery hint during `scion hub link` (suggest syncing grove templates)
-- Ensure `scion templates sync` defaults to grove scope (already does - confirm and document)
+- Add auto-sync prompt during `scion hub link` (opt-out in interactive, skipped in non-interactive)
+- Add conflict detection with `--force` flag for overwrites
 
-**Phase 2: Broker inventory reporting (medium effort)**
-- Extend broker heartbeat to include template manifest per grove
-- Hub stores per-GroveProvider template inventory
-- Web UI shows "available templates" for a grove (aggregated across brokers)
-- Mark templates as "local only" or "synced to Hub"
+### Phase 2: Web Template Loading (medium effort)
+- Implement "Load Templates" button in grove settings page
+- Launch dummy agent, exec `scion templates sync --all` in container
+- Display read-only template list in grove settings
+- Populate agent creation form with available grove-scoped templates
 
-**Phase 3: On-demand promotion (medium effort)**
-- Hub can request a broker to upload a specific template
-- Web UI "sync to Hub" button for local-only templates
-- Auto-promotion option: first agent creation with a local-only template triggers sync
-- Conflict detection and resolution for multi-broker groves
-
-**Phase 4: Git-integrated discovery (optional, git groves only)**
-- For git groves with in-repo templates, sparse checkout discovery on grove creation
-- Webhook-based re-sync on push events
-- Only relevant if teams commit templates to the repo (not externalized)
+### Phase 3: Hub-Native Template Editing (medium effort)
+- Web UI support for creating/editing grove templates directly for hub-native groves
+- Template content editor with file management
+- No container needed — direct Hub storage operations
 
 ---
 
@@ -348,22 +239,31 @@ The web UI needs to:
 ### Architectural
 1. **Source of truth**: After a template is synced to the Hub, which version is authoritative - Hub or local filesystem? Should the Hub version be pushed back to brokers?
 2. **Sync direction**: Is sync unidirectional (local -> Hub) or bidirectional? If bidirectional, how to handle conflicts?
-3. **Template identity**: Should grove-scoped templates with the same name on different brokers be considered the same template? Or should broker provenance be part of the identity?
 
 ### UX
-4. **Auto-sync appetite**: How much automatic syncing do users expect? Is explicit `sync` preferred, or should linking/heartbeat handle it?
-5. **Web-first template creation**: Should the web UI support creating grove templates directly (Hub-native), or is the CLI the primary authoring tool?
-6. **Template visibility in agent creation**: When creating an agent from the web UI, should users see local-only templates (that would need sync first), or only Hub-synced templates?
+3. **Web-first template creation**: Should the web UI support creating grove templates directly (Hub-native) for non-hub-native groves, or is the CLI the primary authoring tool?
+4. **Template visibility in agent creation**: When creating an agent from the web UI, should users only see Hub-synced templates, or also indicate that unsynced local templates may exist?
 
 ### Technical
-7. **Broker upload API**: If the Hub requests a broker to upload a template, what's the auth model? Can any user trigger this, or only grove owners?
-8. **Content hash stability**: Are content hashes computed the same way on broker and Hub? (Currently yes - SHA-256 of concatenated file hashes)
-9. **Externalized git grove templates**: Since templates are now in the external config dir (not in-repo), what is the expected flow for a brand-new broker linking a git grove? The external config dir starts empty - how do templates get there?
+5. **Dummy agent lifecycle**: How long does the dummy agent for web-based template sync live? What cleanup is needed?
+6. **Content hash stability**: Are content hashes computed the same way on broker and Hub? (Currently yes - SHA-256 of concatenated file hashes)
+7. **Externalized git grove templates**: Since templates are now in the external config dir (not in-repo), what is the expected flow for a brand-new broker linking a git grove? The external config dir starts empty - how do templates get there?
 
-### Multi-Broker
-10. **Consistency model**: For linked groves with multiple brokers, is eventual consistency acceptable, or do we need stronger guarantees?
-11. **Conflict resolution UI**: What does multi-broker template conflict resolution look like in the web UI? Side-by-side diff? Pick-a-winner?
-12. **Offline brokers**: If the only broker with a specific template goes offline, should the Hub have cached the template content proactively?
+---
+
+## Appendix: Rejected Approaches
+
+### Approach A: Broker-Reported Template Inventory (Rejected - too complex)
+
+Brokers would periodically scan their local grove template directories and report the inventory to the Hub via heartbeat. Rejected due to excessive complexity — requires extending the GroveProvider model, adds multiple states to track, and doesn't solve the fundamental problem of getting template content to the Hub.
+
+### Approach D: Template Declaration in Grove Metadata (Not selected)
+
+Groves would declare template requirements in metadata by name/version. Rejected because it adds a two-step process (declare + sync) without solving the core sync problem. Declaration can drift from actual template availability.
+
+### Approach E: Hybrid Broker Inventory + On-Demand Promotion (Not selected)
+
+Combined broker inventory reporting with lazy on-demand sync. Not selected in favor of the simpler B+C combination, which achieves the same goals with less operational complexity.
 
 ---
 
