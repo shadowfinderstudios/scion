@@ -66,7 +66,7 @@ func TestSharedDirsToVolumeMounts(t *testing.T) {
 		{Name: "workspace-cache", InWorkspace: true},
 	}
 
-	mounts, err := SharedDirsToVolumeMounts(projectDir, dirs)
+	mounts, err := SharedDirsToVolumeMounts(projectDir, dirs, "")
 	require.NoError(t, err)
 	require.Len(t, mounts, 3)
 
@@ -80,14 +80,36 @@ func TestSharedDirsToVolumeMounts(t *testing.T) {
 	assert.Equal(t, "/scion-volumes/artifacts", mounts[1].Target)
 	assert.True(t, mounts[1].ReadOnly)
 
-	// workspace-cache: in-workspace mount path
+	// workspace-cache: in-workspace mount path (default /workspace)
 	assert.Contains(t, mounts[2].Source, "workspace-cache")
 	assert.Equal(t, "/workspace/.scion-volumes/workspace-cache", mounts[2].Target)
 	assert.False(t, mounts[2].ReadOnly)
 }
 
+func TestSharedDirsToVolumeMounts_GitWorktreeWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "grove-configs", "test__abc12345", ".scion")
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
+
+	dirs := []api.SharedDir{
+		{Name: "build-cache"},
+		{Name: "workspace-cache", InWorkspace: true},
+	}
+
+	containerWorkspace := "/repo-root/.scion/agents/my-agent/workspace"
+	mounts, err := SharedDirsToVolumeMounts(projectDir, dirs, containerWorkspace)
+	require.NoError(t, err)
+	require.Len(t, mounts, 2)
+
+	// build-cache: default mount path (not affected by container workspace)
+	assert.Equal(t, "/scion-volumes/build-cache", mounts[0].Target)
+
+	// workspace-cache: uses the git worktree container workspace path
+	assert.Equal(t, "/repo-root/.scion/agents/my-agent/workspace/.scion-volumes/workspace-cache", mounts[1].Target)
+}
+
 func TestSharedDirsToVolumeMounts_Empty(t *testing.T) {
-	mounts, err := SharedDirsToVolumeMounts("/whatever", nil)
+	mounts, err := SharedDirsToVolumeMounts("/whatever", nil, "")
 	require.NoError(t, err)
 	assert.Nil(t, mounts)
 }

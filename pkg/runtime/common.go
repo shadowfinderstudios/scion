@@ -48,6 +48,25 @@ func findGCPTelemetryCredentialPath(secrets []api.ResolvedSecret, containerHome 
 	return ""
 }
 
+// ResolveContainerWorkspace computes the container-side workspace path based on
+// the workspace strategy. For git worktree setups where the workspace is under
+// the repo root, this returns /repo-root/<relPath>. Otherwise it returns /workspace.
+func ResolveContainerWorkspace(repoRoot, workspace string, gitClone *api.GitCloneConfig) string {
+	if workspace == "" {
+		return "/workspace"
+	}
+	if gitClone != nil {
+		return "/workspace"
+	}
+	if repoRoot != "" {
+		relWorkspace, err := filepath.Rel(repoRoot, workspace)
+		if err == nil && !strings.HasPrefix(relWorkspace, "..") {
+			return filepath.Join("/repo-root", relWorkspace)
+		}
+	}
+	return "/workspace"
+}
+
 // buildCommonRunArgs constructs the common arguments for 'run' command across different runtimes.
 func buildCommonRunArgs(config RunConfig) ([]string, error) {
 	args := []string{"run", "-d", "-i"}

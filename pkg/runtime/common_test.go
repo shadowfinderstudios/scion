@@ -875,6 +875,54 @@ func TestGcloudMountSkippedInBrokerMode(t *testing.T) {
 	}
 }
 
+func TestResolveContainerWorkspace(t *testing.T) {
+	tests := []struct {
+		name      string
+		repoRoot  string
+		workspace string
+		gitClone  *api.GitCloneConfig
+		want      string
+	}{
+		{
+			name: "empty workspace",
+			want: "/workspace",
+		},
+		{
+			name:      "git clone mode",
+			workspace: "/some/path",
+			gitClone:  &api.GitCloneConfig{URL: "https://example.com/repo.git"},
+			want:      "/workspace",
+		},
+		{
+			name:      "workspace under repo root (git worktree)",
+			repoRoot:  "/home/user/myproject",
+			workspace: "/home/user/myproject/.scion/agents/my-agent/workspace",
+			want:      "/repo-root/.scion/agents/my-agent/workspace",
+		},
+		{
+			name:      "workspace outside repo root",
+			repoRoot:  "/home/user/myproject",
+			workspace: "/tmp/worktrees/my-agent",
+			want:      "/workspace",
+		},
+		{
+			name:      "workspace without repo root",
+			workspace: "/some/workspace",
+			want:      "/workspace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveContainerWorkspace(tt.repoRoot, tt.workspace, tt.gitClone)
+			if got != tt.want {
+				t.Errorf("ResolveContainerWorkspace(%q, %q, %v) = %q, want %q",
+					tt.repoRoot, tt.workspace, tt.gitClone, got, tt.want)
+			}
+		})
+	}
+}
+
 
 
 	

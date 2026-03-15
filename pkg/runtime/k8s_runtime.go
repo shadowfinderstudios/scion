@@ -1028,11 +1028,15 @@ func (r *KubernetesRuntime) buildPod(namespace string, config RunConfig) (*corev
 
 	// Process shared directories — create PVC-backed volumes and mounts.
 	// Build a set of shared dir targets so we can skip them in the regular volume loop.
+	k8sContainerWorkspace := config.ContainerWorkspace
+	if k8sContainerWorkspace == "" {
+		k8sContainerWorkspace = "/workspace"
+	}
 	sharedDirTargets := make(map[string]bool, len(config.SharedDirs))
 	for i, sd := range config.SharedDirs {
 		target := fmt.Sprintf("/scion-volumes/%s", sd.Name)
 		if sd.InWorkspace {
-			target = fmt.Sprintf("/workspace/.scion-volumes/%s", sd.Name)
+			target = fmt.Sprintf("%s/.scion-volumes/%s", k8sContainerWorkspace, sd.Name)
 		}
 		sharedDirTargets[target] = true
 

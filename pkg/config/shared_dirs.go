@@ -81,10 +81,16 @@ func EnsureSharedDirs(projectDir string, dirs []api.SharedDir) error {
 
 // SharedDirsToVolumeMounts converts shared dir declarations into VolumeMount
 // entries suitable for injection into a RunConfig. Each shared dir becomes a
-// bind mount at either /scion-volumes/<name> or /workspace/.scion-volumes/<name>.
-func SharedDirsToVolumeMounts(projectDir string, dirs []api.SharedDir) ([]api.VolumeMount, error) {
+// bind mount at either /scion-volumes/<name> or <containerWorkspace>/.scion-volumes/<name>.
+// The containerWorkspace parameter specifies the container-side workspace path
+// (e.g., /workspace or /repo-root/.scion/agents/foo/workspace for git worktrees).
+func SharedDirsToVolumeMounts(projectDir string, dirs []api.SharedDir, containerWorkspace string) ([]api.VolumeMount, error) {
 	if len(dirs) == 0 {
 		return nil, nil
+	}
+
+	if containerWorkspace == "" {
+		containerWorkspace = "/workspace"
 	}
 
 	var mounts []api.VolumeMount
@@ -96,7 +102,7 @@ func SharedDirsToVolumeMounts(projectDir string, dirs []api.SharedDir) ([]api.Vo
 
 		target := fmt.Sprintf("/scion-volumes/%s", d.Name)
 		if d.InWorkspace {
-			target = fmt.Sprintf("/workspace/.scion-volumes/%s", d.Name)
+			target = fmt.Sprintf("%s/.scion-volumes/%s", containerWorkspace, d.Name)
 		}
 
 		mounts = append(mounts, api.VolumeMount{

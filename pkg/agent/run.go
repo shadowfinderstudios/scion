@@ -598,6 +598,9 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		finalScionCfg != nil && finalScionCfg.Telemetry != nil,
 		finalScionCfg != nil && finalScionCfg.Telemetry != nil && finalScionCfg.Telemetry.Cloud != nil)
 
+	// Compute the container-side workspace path for volume mount targets.
+	containerWorkspace := runtime.ResolveContainerWorkspace(repoRoot, effectiveWorkspace, opts.GitClone)
+
 	// Inject shared directory volumes from grove settings or opts (hub-dispatched)
 	var effectiveSharedDirs []api.SharedDir
 	if settings != nil && len(settings.SharedDirs) > 0 {
@@ -610,7 +613,7 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		if err := config.EnsureSharedDirs(projectDir, effectiveSharedDirs); err != nil {
 			util.Debugf("Start: failed to ensure shared dirs: %v", err)
 		}
-		sdVolumes, err := config.SharedDirsToVolumeMounts(projectDir, effectiveSharedDirs)
+		sdVolumes, err := config.SharedDirsToVolumeMounts(projectDir, effectiveSharedDirs, containerWorkspace)
 		if err != nil {
 			util.Debugf("Start: failed to resolve shared dir volumes: %v", err)
 		} else {
@@ -621,13 +624,14 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 	}
 
 	runCfg := runtime.RunConfig{
-		Name:             opts.Name,
-		Template:         template,
-		UnixUsername:     unixUsername,
-		Image:            resolvedImage,
-		HomeDir:          agentHome,
-		Workspace:        effectiveWorkspace,
-		RepoRoot:         repoRoot,
+		Name:               opts.Name,
+		Template:           template,
+		UnixUsername:        unixUsername,
+		Image:              resolvedImage,
+		HomeDir:            agentHome,
+		Workspace:          effectiveWorkspace,
+		RepoRoot:           repoRoot,
+		ContainerWorkspace: containerWorkspace,
 		ResolvedAuth:     resolvedAuth,
 		Harness:          h,
 		TelemetryEnabled: telemetryEnabled,

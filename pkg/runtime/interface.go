@@ -21,13 +21,14 @@ import (
 )
 
 type RunConfig struct {
-	Name            string
-	Template        string
-	UnixUsername    string
-	Image           string
-	HomeDir         string
-	Workspace       string
-	RepoRoot        string
+	Name               string
+	Template           string
+	UnixUsername        string
+	Image              string
+	HomeDir            string
+	Workspace          string
+	RepoRoot           string
+	ContainerWorkspace string // The container-side workspace path (e.g., /workspace or /repo-root/.scion/agents/foo/workspace)
 	Env             []string
 	ResolvedSecrets []api.ResolvedSecret
 	Volumes         []api.VolumeMount
