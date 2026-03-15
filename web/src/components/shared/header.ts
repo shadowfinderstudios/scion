@@ -316,6 +316,17 @@ export class ScionHeader extends LitElement {
     const saved = localStorage.getItem('scion-theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     this.isDark = saved ? saved === 'dark' : prefersDark;
+
+    // Ensure the root element reflects the resolved theme so that Shoelace
+    // components and CSS custom properties pick up the correct mode.
+    const root = document.documentElement;
+    if (this.isDark) {
+      root.setAttribute('data-theme', 'dark');
+      root.classList.add('sl-theme-dark');
+    } else {
+      root.setAttribute('data-theme', 'light');
+      root.classList.remove('sl-theme-dark');
+    }
   }
 
   private toggleTheme(): void {

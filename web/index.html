@@ -22,7 +22,22 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>Scion - Agent Orchestration Platform</title>
   <link rel="stylesheet" href="/node_modules/@shoelace-style/shoelace/dist/themes/light.css" />
+  <link rel="stylesheet" href="/node_modules/@shoelace-style/shoelace/dist/themes/dark.css" />
   <link rel="stylesheet" href="/src/styles/theme.css" />
+  <script>
+    // Apply saved theme immediately to prevent flash of wrong theme.
+    (function() {
+      var saved = localStorage.getItem('scion-theme');
+      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var dark = saved ? saved === 'dark' : prefersDark;
+      if (dark) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        document.documentElement.classList.add('sl-theme-dark');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: var(--scion-font-sans, system-ui, sans-serif); }

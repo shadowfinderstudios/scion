@@ -314,6 +314,11 @@
   --scion-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
   --scion-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
   --scion-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+
+  /* Shoelace extreme-end neutrals for dark mode.
+     neutral-0 is used for input/form backgrounds; neutral-1000 for input text. */
+  --sl-color-neutral-0: var(--scion-neutral-800);
+  --sl-color-neutral-1000: var(--scion-neutral-50);
 }
 
 /* ==========================================================================
@@ -385,5 +390,9 @@
     --scion-text-muted: var(--scion-neutral-400);
     --scion-border: var(--scion-neutral-700);
     --scion-border-hover: var(--scion-neutral-600);
+
+    /* Shoelace extreme-end neutrals */
+    --sl-color-neutral-0: var(--scion-neutral-800);
+    --sl-color-neutral-1000: var(--scion-neutral-50);
   }
 }
