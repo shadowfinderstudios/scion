@@ -85,6 +85,11 @@ export default defineConfig({
                     if (id.includes('node_modules/lit') || id.includes('node_modules/@lit')) {
                         return 'lit';
                     }
+                    if (id.includes('node_modules/@xterm')) {
+                        // Basename without extension for stable chunk names
+                        const match = id.match(/@xterm\/([^/]+)/);
+                        return match ? `xterm` : 'xterm';
+                    }
                 },
             },
         },
@@ -108,6 +113,6 @@ export default defineConfig({
     },
     // Optimize Lit dependency
     optimizeDeps: {
-        include: ['lit', '@vaadin/router'],
+        include: ['lit'],
     },
 });

@@ -55,46 +55,19 @@ import '@shoelace-style/shoelace/dist/components/tab-group/tab-group.js';
 import '@shoelace-style/shoelace/dist/components/tab/tab.js';
 import '@shoelace-style/shoelace/dist/components/tab-panel/tab-panel.js';
 
-// Import all components for client-side hydration and routing
-// App shell (imports shared components internally)
+// Import app shell and core shared components (always needed)
 import '../components/app-shell.js';
-
-// Shared components (also imported by app-shell, but explicit for clarity)
 import '../components/shared/nav.js';
 import '../components/shared/header.js';
 import '../components/shared/breadcrumb.js';
 import '../components/shared/status-badge.js';
 import '../components/shared/debug-panel.js';
 
-// Page components
-import '../components/pages/home.js';
-import '../components/pages/groves.js';
-import '../components/pages/grove-create.js';
-import '../components/pages/grove-detail.js';
-import '../components/pages/grove-settings.js';
-import '../components/pages/agents.js';
-import '../components/pages/agent-detail.js';
-import '../components/pages/agent-create.js';
-import '../components/pages/agent-configure.js';
-import '../components/pages/grove-create.js';
-import '../components/pages/terminal.js';
-import '../components/pages/brokers.js';
-import '../components/pages/broker-detail.js';
-import '../components/pages/admin-scheduler.js';
-import '../components/pages/admin-users.js';
-import '../components/pages/admin-groups.js';
-import '../components/pages/admin-group-detail.js';
-import '../components/pages/profile-env-vars.js';
-import '../components/pages/profile-secrets.js';
-import '../components/pages/profile-settings.js';
-import '../components/pages/settings.js';
-import '../components/pages/admin-server-config.js';
-import '../components/pages/not-found.js';
-import '../components/pages/login.js';
+// Profile shell (lazy-loaded with profile routes)
+// import '../components/profile/profile-shell.js';
+// import '../components/profile/profile-nav.js';
 
-// Profile shell
-import '../components/profile/profile-shell.js';
-import '../components/profile/profile-nav.js';
+// Page components are lazy-loaded per route — see ROUTES below.
 
 /** Current authenticated user, fetched once on init */
 let currentUser: User | null = null;
@@ -124,32 +97,40 @@ async function fetchCurrentUser(): Promise<User | null> {
 }
 
 /**
- * Route configuration mapping URL patterns to page component tag names
+ * Route configuration mapping URL patterns to page component tag names.
+ * Each route includes a lazy loader that dynamically imports the page module,
+ * which registers its custom element as a side effect.
  */
-const ROUTES: { pattern: RegExp; tag: string }[] = [
-  { pattern: /^\/login$/, tag: 'scion-login-page' },
-  { pattern: /^\/$/, tag: 'scion-page-home' },
-  { pattern: /^\/groves$/, tag: 'scion-page-groves' },
-  { pattern: /^\/agents$/, tag: 'scion-page-agents' },
-  { pattern: /^\/brokers$/, tag: 'scion-page-brokers' },
-  { pattern: /^\/brokers\/[^/]+$/, tag: 'scion-page-broker-detail' },
-  { pattern: /^\/admin\/scheduler$/, tag: 'scion-page-admin-scheduler' },
-  { pattern: /^\/admin\/users$/, tag: 'scion-page-admin-users' },
-  { pattern: /^\/admin\/groups$/, tag: 'scion-page-admin-groups' },
-  { pattern: /^\/admin\/groups\/[^/]+$/, tag: 'scion-page-admin-group-detail' },
-  { pattern: /^\/admin\/server-config$/, tag: 'scion-page-admin-server-config' },
-  { pattern: /^\/settings$/, tag: 'scion-page-settings' },
-  { pattern: /^\/profile\/env$/, tag: 'scion-page-profile-env-vars' },
-  { pattern: /^\/profile\/secrets$/, tag: 'scion-page-profile-secrets' },
-  { pattern: /^\/profile\/settings$/, tag: 'scion-page-profile-settings' },
-  { pattern: /^\/profile$/, tag: 'scion-page-profile-env-vars' },
-  { pattern: /^\/groves\/new$/, tag: 'scion-page-grove-create' },
-  { pattern: /^\/groves\/[^/]+\/settings$/, tag: 'scion-page-grove-settings' },
-  { pattern: /^\/groves\/[^/]+$/, tag: 'scion-page-grove-detail' },
-  { pattern: /^\/agents\/new$/, tag: 'scion-page-agent-create' },
-  { pattern: /^\/agents\/[^/]+\/configure$/, tag: 'scion-page-agent-configure' },
-  { pattern: /^\/agents\/[^/]+\/terminal$/, tag: 'scion-page-terminal' },
-  { pattern: /^\/agents\/[^/]+$/, tag: 'scion-page-agent-detail' },
+interface RouteConfig {
+  pattern: RegExp;
+  tag: string;
+  load: () => Promise<unknown>;
+}
+
+const ROUTES: RouteConfig[] = [
+  { pattern: /^\/login$/, tag: 'scion-login-page', load: () => import('../components/pages/login.js') },
+  { pattern: /^\/$/, tag: 'scion-page-home', load: () => import('../components/pages/home.js') },
+  { pattern: /^\/groves$/, tag: 'scion-page-groves', load: () => import('../components/pages/groves.js') },
+  { pattern: /^\/agents$/, tag: 'scion-page-agents', load: () => import('../components/pages/agents.js') },
+  { pattern: /^\/brokers$/, tag: 'scion-page-brokers', load: () => import('../components/pages/brokers.js') },
+  { pattern: /^\/brokers\/[^/]+$/, tag: 'scion-page-broker-detail', load: () => import('../components/pages/broker-detail.js') },
+  { pattern: /^\/admin\/scheduler$/, tag: 'scion-page-admin-scheduler', load: () => import('../components/pages/admin-scheduler.js') },
+  { pattern: /^\/admin\/users$/, tag: 'scion-page-admin-users', load: () => import('../components/pages/admin-users.js') },
+  { pattern: /^\/admin\/groups$/, tag: 'scion-page-admin-groups', load: () => import('../components/pages/admin-groups.js') },
+  { pattern: /^\/admin\/groups\/[^/]+$/, tag: 'scion-page-admin-group-detail', load: () => import('../components/pages/admin-group-detail.js') },
+  { pattern: /^\/admin\/server-config$/, tag: 'scion-page-admin-server-config', load: () => import('../components/pages/admin-server-config.js') },
+  { pattern: /^\/settings$/, tag: 'scion-page-settings', load: () => import('../components/pages/settings.js') },
+  { pattern: /^\/profile\/env$/, tag: 'scion-page-profile-env-vars', load: () => import('../components/pages/profile-env-vars.js') },
+  { pattern: /^\/profile\/secrets$/, tag: 'scion-page-profile-secrets', load: () => import('../components/pages/profile-secrets.js') },
+  { pattern: /^\/profile\/settings$/, tag: 'scion-page-profile-settings', load: () => import('../components/pages/profile-settings.js') },
+  { pattern: /^\/profile$/, tag: 'scion-page-profile-env-vars', load: () => import('../components/pages/profile-env-vars.js') },
+  { pattern: /^\/groves\/new$/, tag: 'scion-page-grove-create', load: () => import('../components/pages/grove-create.js') },
+  { pattern: /^\/groves\/[^/]+\/settings$/, tag: 'scion-page-grove-settings', load: () => import('../components/pages/grove-settings.js') },
+  { pattern: /^\/groves\/[^/]+$/, tag: 'scion-page-grove-detail', load: () => import('../components/pages/grove-detail.js') },
+  { pattern: /^\/agents\/new$/, tag: 'scion-page-agent-create', load: () => import('../components/pages/agent-create.js') },
+  { pattern: /^\/agents\/[^/]+\/configure$/, tag: 'scion-page-agent-configure', load: () => import('../components/pages/agent-configure.js') },
+  { pattern: /^\/agents\/[^/]+\/terminal$/, tag: 'scion-page-terminal', load: () => import('../components/pages/terminal.js') },
+  { pattern: /^\/agents\/[^/]+$/, tag: 'scion-page-agent-detail', load: () => import('../components/pages/agent-detail.js') },
 ];
 
 /**
@@ -200,47 +181,20 @@ async function init(): Promise<void> {
     currentUser = await fetchCurrentUser();
   }
 
-  // Wait for custom elements to be defined
+  // Wait for core shell components to be defined (page components are lazy-loaded)
   await Promise.all([
-    // Core components
     customElements.whenDefined('scion-app'),
     customElements.whenDefined('scion-nav'),
     customElements.whenDefined('scion-header'),
     customElements.whenDefined('scion-breadcrumb'),
     customElements.whenDefined('scion-status-badge'),
     customElements.whenDefined('scion-debug-panel'),
-    // Page components
-    customElements.whenDefined('scion-page-home'),
-    customElements.whenDefined('scion-page-groves'),
-    customElements.whenDefined('scion-page-grove-create'),
-    customElements.whenDefined('scion-page-grove-detail'),
-    customElements.whenDefined('scion-page-grove-settings'),
-    customElements.whenDefined('scion-page-agents'),
-    customElements.whenDefined('scion-page-agent-detail'),
-    customElements.whenDefined('scion-page-agent-create'),
-    customElements.whenDefined('scion-page-agent-configure'),
-    customElements.whenDefined('scion-page-terminal'),
-    customElements.whenDefined('scion-page-brokers'),
-    customElements.whenDefined('scion-page-broker-detail'),
-    customElements.whenDefined('scion-page-admin-scheduler'),
-    customElements.whenDefined('scion-page-admin-users'),
-    customElements.whenDefined('scion-page-admin-groups'),
-    customElements.whenDefined('scion-page-admin-group-detail'),
-    customElements.whenDefined('scion-page-settings'),
-    customElements.whenDefined('scion-page-admin-server-config'),
-    customElements.whenDefined('scion-page-profile-env-vars'),
-    customElements.whenDefined('scion-page-profile-secrets'),
-    customElements.whenDefined('scion-page-profile-settings'),
-    customElements.whenDefined('scion-profile-shell'),
-    customElements.whenDefined('scion-profile-nav'),
-    customElements.whenDefined('scion-page-404'),
-    customElements.whenDefined('scion-login-page'),
   ]);
 
   console.info('[Scion] Components defined, setting up router...');
 
   // Render the initial page based on current URL
-  renderRoute(window.location.pathname);
+  await renderRoute(window.location.pathname);
 
   // Setup client-side router for navigation
   setupRouter();
@@ -271,16 +225,23 @@ function getInitialData(): PageData | null {
   }
 }
 
+/** Fallback route for unmatched paths */
+const NOT_FOUND_ROUTE: RouteConfig = {
+  pattern: /./,
+  tag: 'scion-page-404',
+  load: () => import('../components/pages/not-found.js'),
+};
+
 /**
- * Resolves a URL path to a page component tag name
+ * Resolves a URL path to a route configuration
  */
-function resolveRoute(path: string): string {
+function resolveRoute(path: string): RouteConfig {
   for (const route of ROUTES) {
     if (route.pattern.test(path)) {
-      return route.tag;
+      return route;
     }
   }
-  return 'scion-page-404';
+  return NOT_FOUND_ROUTE;
 }
 
 /**
@@ -297,18 +258,23 @@ function getShellType(tag: string): ShellType {
 /** Cached shell element and its type, reused across navigations */
 let activeShell: { type: ShellType; element: HTMLElement } | null = null;
 
+/** Navigation counter to cancel stale renders when rapid navigations occur */
+let navigationId = 0;
+
 /**
  * Renders the page component for the given path into #app.
+ * Lazily imports the page module before creating the element.
  * Reuses the shell element (sidebar, header, etc.) when possible
  * to avoid full-page redraws on navigation.
  */
-function renderRoute(path: string): void {
+async function renderRoute(path: string): Promise<void> {
   const appContainer = document.getElementById('app');
   if (!appContainer) return;
 
   // Strip query string and hash for route matching
   const pathname = path.split('?')[0].split('#')[0];
-  const tag = resolveRoute(pathname);
+  const route = resolveRoute(pathname);
+  const tag = route.tag;
 
   // Build page data with current user context for page components.
   // Include SSR-prefetched data on the initial render so page components
@@ -332,6 +298,21 @@ function renderRoute(path: string): void {
   }
 
   const shellType = getShellType(tag);
+
+  // Lazy-load the page component module (and profile shell if needed).
+  // The import registers the custom element as a side effect.
+  const thisNav = ++navigationId;
+  const loads: Promise<unknown>[] = [route.load()];
+  if (shellType === 'profile' && !customElements.get('scion-profile-shell')) {
+    loads.push(
+      import('../components/profile/profile-shell.js'),
+      import('../components/profile/profile-nav.js'),
+    );
+  }
+  await Promise.all(loads);
+
+  // If another navigation started while we were loading, abort this render
+  if (thisNav !== navigationId) return;
 
   // If the shell type changed, tear down and rebuild
   if (activeShell && activeShell.type !== shellType) {
@@ -433,7 +414,7 @@ function setupRouter(): void {
 
   // Handle browser back/forward
   window.addEventListener('popstate', () => {
-    renderRoute(window.location.pathname);
+    void renderRoute(window.location.pathname);
   });
 }
 
@@ -444,7 +425,7 @@ function navigateTo(path: string): void {
   if (path === window.location.pathname) return;
 
   window.history.pushState({}, '', path);
-  renderRoute(path);
+  void renderRoute(path);
 }
 
 // Initialize when DOM is ready
