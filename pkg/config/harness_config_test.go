@@ -134,6 +134,18 @@ user: scion
 	if err == nil {
 		t.Fatal("expected error for nonexistent harness-config")
 	}
+
+	// Test: "generic" returns a synthetic entry even with no on-disk directory
+	hc, err = FindHarnessConfigDir("generic", grovePath)
+	if err != nil {
+		t.Fatalf("FindHarnessConfigDir for generic should succeed: %v", err)
+	}
+	if hc.Name != "generic" {
+		t.Errorf("expected name 'generic', got %q", hc.Name)
+	}
+	if hc.Config.Harness != "generic" {
+		t.Errorf("expected harness 'generic', got %q", hc.Config.Harness)
+	}
 }
 
 func TestFindHarnessConfigDir_TemplatePaths(t *testing.T) {

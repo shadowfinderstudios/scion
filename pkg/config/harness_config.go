@@ -100,6 +100,16 @@ func FindHarnessConfigDir(name string, grovePath string, templatePaths ...string
 		}
 	}
 
+	// The "generic" harness has no embedded files and therefore no on-disk
+	// directory.  Return a synthetic entry so callers (e.g. template-sync
+	// agents) can proceed without a physical harness-config dir.
+	if name == "generic" {
+		return &HarnessConfigDir{
+			Name:   "generic",
+			Config: HarnessConfigEntry{Harness: "generic"},
+		}, nil
+	}
+
 	return nil, fmt.Errorf("harness-config %q not found", name)
 }
 
