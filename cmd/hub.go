@@ -1894,9 +1894,28 @@ func runHubLink(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Grove '%s' is already linked to the Hub (ID: %s)\n", groveName, groveID)
 	} else {
 		if hubGrove != nil {
-			// Local grove_id points to a different grove on the Hub — stale link
+			// Local grove_id points to a different grove on the Hub — stale link.
+			// In V1 settings, hub.grove_id and grove_id share a single field, so
+			// a previous link may have overwritten the local grove_id with the
+			// stale hub grove ID. Regenerate from the marker file or directory
+			// to get the true local identity before re-registering.
 			fmt.Printf("Warning: local grove '%s' was linked to hub grove '%s' (ID: %s). Re-linking.\n",
-				groveName, hubGrove.Name, groveID)
+				groveName, hubGrove.Name, hubLookupID)
+
+			// Clear the stale hub grove ID
+			if err := config.UpdateSetting(resolvedPath, "hub.groveId", "", isGlobal); err != nil {
+				util.Debugf("Failed to clear stale hub.groveId: %v", err)
+			}
+
+			// Regenerate the local grove ID from the marker file or directory
+			if markerID, err := config.ReadGroveID(resolvedPath); err == nil && markerID != "" {
+				groveID = markerID
+			} else {
+				groveID = config.GenerateGroveIDForDir(filepath.Dir(resolvedPath))
+			}
+			if err := config.UpdateSetting(resolvedPath, "grove_id", groveID, isGlobal); err != nil {
+				return fmt.Errorf("failed to save grove_id: %w", err)
+			}
 		}
 		// Check for existing groves with the same name
 		resp, err := client.Groves().List(ctx, &hubclient.ListGrovesOptions{
