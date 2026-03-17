@@ -37,6 +37,7 @@ import (
 var (
 	listAll     bool
 	listDeleted bool
+	listRunning bool
 	sortByTime  bool
 )
 
@@ -255,7 +256,24 @@ func hubAgentToAgentInfo(a hubclient.Agent) api.AgentInfo {
 
 // displayAgents displays agents in the requested format
 // hubMode indicates if the listing is from Hub (shows BROKER column)
+// filterRunningAgents returns only agents whose phase is not stopped or error.
+func filterRunningAgents(agents []api.AgentInfo) []api.AgentInfo {
+	filtered := make([]api.AgentInfo, 0, len(agents))
+	for _, a := range agents {
+		p := state.Phase(a.Phase)
+		if p == state.PhaseStopped || p == state.PhaseError {
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	return filtered
+}
+
 func displayAgents(agents []api.AgentInfo, all bool, hubMode bool) error {
+	if listRunning {
+		agents = filterRunningAgents(agents)
+	}
+
 	// Resolve human-friendly template names from raw values that may
 	// contain cache paths or remote URIs (mirrors the 813307c fix for
 	// the tmux footer).
@@ -547,5 +565,6 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().BoolVarP(&listAll, "all", "a", false, "List all agents across all groves")
 	listCmd.Flags().BoolVar(&listDeleted, "deleted", false, "Include soft-deleted agents in listing")
+	listCmd.Flags().BoolVarP(&listRunning, "running", "r", false, "Only show agents that are not stopped or errored")
 	listCmd.Flags().BoolVarP(&sortByTime, "time", "t", false, "Sort by last activity, most recent first")
 }

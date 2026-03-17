@@ -484,6 +484,87 @@ func TestHubAgentToAgentInfo_HarnessConfigFallbackToAppliedConfig(t *testing.T) 
 	}
 }
 
+func TestFilterRunningAgents(t *testing.T) {
+	agents := []api.AgentInfo{
+		{Name: "running-agent", Phase: "running"},
+		{Name: "stopped-agent", Phase: "stopped"},
+		{Name: "error-agent", Phase: "error"},
+		{Name: "starting-agent", Phase: "starting"},
+		{Name: "created-agent", Phase: "created"},
+		{Name: "provisioning-agent", Phase: "provisioning"},
+		{Name: "unknown-agent", Phase: "unknown"},
+		{Name: "empty-phase-agent", Phase: ""},
+	}
+
+	filtered := filterRunningAgents(agents)
+
+	// Should exclude stopped and error, keep everything else
+	expected := map[string]bool{
+		"running-agent":      true,
+		"starting-agent":     true,
+		"created-agent":      true,
+		"provisioning-agent": true,
+		"unknown-agent":      true,
+		"empty-phase-agent":  true,
+	}
+
+	if len(filtered) != len(expected) {
+		t.Fatalf("expected %d agents, got %d", len(expected), len(filtered))
+	}
+	for _, a := range filtered {
+		if !expected[a.Name] {
+			t.Errorf("unexpected agent in filtered list: %s (phase=%s)", a.Name, a.Phase)
+		}
+	}
+}
+
+func TestDisplayAgentsRunningFlag(t *testing.T) {
+	agents := []api.AgentInfo{
+		{
+			Name:            "active-agent",
+			Template:        "default",
+			Runtime:         "docker",
+			Grove:           "my-project",
+			Phase:           "running",
+			ContainerStatus: "Up 1 hour",
+		},
+		{
+			Name:            "stopped-agent",
+			Template:        "default",
+			Runtime:         "docker",
+			Grove:           "my-project",
+			Phase:           "stopped",
+			ContainerStatus: "Exited",
+		},
+	}
+
+	listRunning = true
+	defer func() { listRunning = false }()
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := displayAgents(agents, false, false)
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("displayAgents returned error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if !strings.Contains(output, "active-agent") {
+		t.Errorf("output should contain running agent 'active-agent': %s", output)
+	}
+	if strings.Contains(output, "stopped-agent") {
+		t.Errorf("output should NOT contain stopped agent 'stopped-agent': %s", output)
+	}
+}
+
 func TestHubAgentToAgentInfo_HarnessConfigTopLevelTakesPrecedence(t *testing.T) {
 	// When both are set, top-level harnessConfig takes precedence
 	a := hubclient.Agent{
