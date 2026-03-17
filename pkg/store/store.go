@@ -319,6 +319,7 @@ type HarnessConfigFilter struct {
 	Name    string // Exact match on name
 	Scope   string
 	ScopeID string
+	GroveID string // When set without Scope, returns global + grove-scoped configs for this grove
 	Harness string
 	OwnerID string
 	Status  string

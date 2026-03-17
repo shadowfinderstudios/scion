@@ -548,7 +548,9 @@ export class ScionPageGroveSettings extends LitElement {
 
   private async loadHarnessConfigs(): Promise<void> {
     try {
-      const response = await apiFetch('/api/v1/harness-configs?status=active&limit=100');
+      const response = await apiFetch(
+        `/api/v1/harness-configs?status=active&groveId=${encodeURIComponent(this.groveId)}&limit=100`
+      );
       if (response.ok) {
         const data = (await response.json()) as { harnessConfigs?: HarnessConfigEntry[] };
         this.harnessConfigs = data.harnessConfigs || [];

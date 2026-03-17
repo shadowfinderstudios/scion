@@ -2489,6 +2489,10 @@ func (s *SQLiteStore) ListHarnessConfigs(ctx context.Context, filter store.Harne
 	if filter.ScopeID != "" {
 		conditions = append(conditions, "scope_id = ?")
 		args = append(args, filter.ScopeID)
+	} else if filter.GroveID != "" && filter.Scope == "" {
+		// When groveId is set without scope, return global + grove-scoped configs for this grove
+		conditions = append(conditions, "(scope = 'global' OR (scope = 'grove' AND scope_id = ?))")
+		args = append(args, filter.GroveID)
 	}
 	if filter.Harness != "" {
 		conditions = append(conditions, "harness = ?")
