@@ -297,3 +297,71 @@ The client `SSEClient` listens for `event: update` and the `StateManager` parses
 - **Blank page**: Check that web assets are built (`npm run build`) and the `--web-assets-dir` flag points to `web/dist/client`. Use `screenshot-debug.js` to see console errors and 404s.
 - **SSE events not updating UI**: Check the SSE event type. The client only listens for `event: update`. If the server sends events with the subject as the type, they are silently dropped.
 - **Agent delete not reflected**: The `onAgentsUpdated()` handler in `grove-detail.ts` must run even when the state manager's agent map is empty (after the last agent is deleted).
+
+## Browser-Based QA with Chrome DevTools MCP
+
+When using the Chrome DevTools MCP tools (`take_screenshot`, `take_snapshot`, `click`, `fill`, etc.) to validate the web UI, follow these guidelines.
+
+### Starting the Go server
+
+1. **Settings must exist first.** The server requires `image_registry` in `~/.scion/settings.json` with `schema_version`. Create this before starting:
+   ```json
+   {
+     "schema_version": "1",
+     "image_registry": "dummy.registry.io"
+   }
+   ```
+   Without `schema_version`, the settings file is silently ignored and the server exits with `image_registry is not configured`.
+
+2. **Run the server with `&` in a regular Bash call**, not with `run_in_background`. Background tasks can be hard to retrieve output from. Instead:
+   ```bash
+   /tmp/scion-test server start --enable-hub --enable-web --dev-auth \
+     --web-assets-dir ./web/dist/client --foreground 2>&1 &
+   sleep 4
+   ss -tlnp | grep 8080  # verify it's listening
+   ```
+
+3. **Capture the dev token** from the server startup output. It appears as:
+   ```
+   Dev token: scion_dev_<hex>
+   ```
+
+4. **Build assets before starting the server**: Run `npm install && npm run build` in `web/` first. The server serves from `web/dist/client`.
+
+### Browser authentication
+
+- **Navigate directly to `http://localhost:8080`** — dev-auth mode sets a session cookie automatically on the first page load, no manual cookie setup needed.
+- **For API calls via curl**, use the dev token as `Authorization: Bearer scion_dev_...` to get a `scion_sess` cookie, then pass it to subsequent requests.
+
+### Taking screenshots and snapshots
+
+- **Prefer `take_snapshot` (a11y tree) over `take_screenshot`** for finding element UIDs to interact with. Screenshots are for visual validation; snapshots give you the clickable UIDs.
+- **Resize the viewport early.** The default headless viewport (800x600) is too small for most pages. Resize to at least 1024x800, or 1280x800 for full table views:
+  ```
+  resize_page(width=1280, height=800)
+  ```
+- **Save screenshots to `.scratch/`** with numbered, descriptive filenames (e.g., `01-initial-page.png`, `07-token-reveal.png`) to create a clear audit trail.
+- **Read screenshots back** with the `Read` tool to visually inspect them — the tool renders images inline.
+
+### Interacting with dialogs
+
+- **Native `confirm()`/`alert()` dialogs block clicks.** When a component uses `confirm()` (e.g., revoke/delete actions), the `click` call will time out. This is expected. After the timeout error, call `handle_dialog` with `action: "accept"` (or `"dismiss"`) to proceed.
+- **Shoelace `<sl-dialog>` modals** are part of the DOM and work normally with `click`/`fill` — they don't trigger the native dialog handler.
+
+### Filling forms in Lit/Shoelace components
+
+- **Use `fill` for `<sl-input>` fields** — it dispatches the correct input events.
+- **Use `click` on `<sl-checkbox>` elements** — they toggle on click.
+- **`<sl-select>` with a single option** may auto-select; verify via snapshot before filling.
+- **After form submission**, take a snapshot to confirm the dialog closed and the list updated.
+
+### Recommended QA workflow
+
+1. Build assets (`npm run build`) and start the server
+2. Resize viewport to 1280x800
+3. Navigate to the target page, screenshot the initial state
+4. Test the primary flow (e.g., create → reveal → list → revoke → delete)
+5. Screenshot after each state transition
+6. Test dark mode (click the theme toggle) and screenshot
+7. Test mobile (resize to 480x800) and screenshot
+8. All screenshots go in `.scratch/` for review
