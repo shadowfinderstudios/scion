@@ -90,7 +90,7 @@ scion hub grove create https://github.com/acme/backend.git --slug my-backend
 ```
 
 :::tip[Idempotent creation]
-Creating a grove from the same git URL twice won't create a duplicate — the grove ID is a deterministic UUID v5 derived from the normalized URL, so the command is idempotent. Git URL user info (e.g., `git@` vs `https://`) is normalized before ID generation, ensuring consistent results across protocols.
+Creating a grove from the same git URL twice won't create a duplicate — the grove ID is a deterministic UUID v5 derived from the normalized URL, so the command is idempotent. Git URL user info (e.g., `git@` vs `https://`) is normalized before ID generation, ensuring consistent results across protocols. Additionally, stale grove links are automatically detected and synchronized during hub-link sync operations.
 :::
 
 ---

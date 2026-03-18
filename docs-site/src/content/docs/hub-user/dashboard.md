@@ -19,8 +19,8 @@ The dashboard features an integrated notification framework with real-time SSE d
 
 ### Groves
 View and manage your registered groves.
-- **Create/Register Grove**: Create a Hub-Native workspace directly on the Hub, or connect a new remote Git repository.
-- **Grove Settings**: Centralized configuration interface for managing grove-scoped environment variables and secrets, including "Injection Mode" controls (Always vs. As-Needed).
+- **Create/Register Grove**: Create a Hub-Native workspace directly on the Hub, or connect a new remote Git repository. Includes a confirmation dialog when creating a grove for an existing git repository.
+- **Grove Settings**: Centralized configuration interface for managing grove-scoped environment variables and secrets, including "Injection Mode" controls (Always vs. As-Needed). The settings page features a streamlined flow with a "Done" button and hides unnecessary registration options for git-backed groves.
 - **Workspace Management**: Download individual workspace files or generate ZIP archives of entire groves directly from the UI.
 - **Shared Directory Management**: View and manage grove shared directories directly from the Web UI (see [Grove Shared Directories](/scion/advanced-local/workspace/#5-grove-shared-directories)).
 - **Agent List**: See all agents belonging to the grove, with card/list view toggle for flexible display.
