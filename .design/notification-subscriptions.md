@@ -489,16 +489,16 @@ The design places commands under `scion notifications` (top-level). An alternati
 9. ✅ Write unit and integration tests
 10. ✅ Refactor `--notify` flag in `createAgent` handler to use the new subscription creation path
 
-### Phase 2: CLI Commands
+### Phase 2: CLI Commands ✅ COMPLETE
 **Goal**: Users and agents can manage subscriptions from the command line.
 
 **Tasks:**
-1. Create `scion notifications` command group with hub-required check
-2. Implement `scion notifications subscribe` with `--agent`, `--grove`, `--triggers` flags
-3. Implement `scion notifications unsubscribe` command
-4. Implement `scion notifications subscriptions` listing command
-5. Move `scion hub notifications` / `scion hub notifications ack` to the new `scion notifications` group (remove old commands)
-6. Write CLI integration tests
+1. ✅ Create `scion notifications` command group with hub-required check
+2. ✅ Implement `scion notifications subscribe` with `--agent`, `--grove`, `--triggers` flags
+3. ✅ Implement `scion notifications unsubscribe` command
+4. ✅ Implement `scion notifications subscriptions` listing command
+5. ✅ Move `scion hub notifications` / `scion hub notifications ack` to the new `scion notifications` group (old commands deprecated with redirects)
+6. ✅ Write CLI integration tests
 
 ### Phase 3: Web UX
 **Goal**: Users can manage subscriptions and see subscription context in the browser.
