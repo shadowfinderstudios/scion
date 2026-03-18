@@ -312,8 +312,7 @@ func runNotificationsSubscribe(cmd *cobra.Command, args []string) error {
 
 ### Migration from `scion hub notifications`
 
-The existing `scion hub notifications` and `scion hub notifications ack` commands continue to work as aliases. The new `scion notifications` group becomes the canonical location. The `hub notifications` subcommand can emit a deprecation notice pointing to `scion notifications`.
-
+The existing `scion hub notifications` and `scion hub notifications ack` commands move to the new `scion notifications` group. No aliases or deprecation notices — the old `hub notifications` path is simply removed.
 ---
 
 ## Web UX
@@ -347,7 +346,7 @@ agent       worker-agent    COMPLETED, WAITING_FOR_INPUT     [Edit] [Delete]
 grove       (all agents)    COMPLETED                        [Edit] [Delete]
 ```
 
-- **Edit dialog**: Modify trigger activities for an existing subscription
+- **Edit**: Opens an inline popover (anchored to the row) with checkboxes for trigger activities, allowing the user to update which events fire notifications for that subscription. Saves via PATCH on dismiss.
 - **Delete**: Remove subscription with confirmation
 
 #### 3. Notification Tray Enhancement
@@ -443,16 +442,16 @@ VALUES ('*', 'grove-uuid', ...);
 
 ---
 
-## Open Questions
+## Design Decisions
 
 ### 1. Subscription Limits
-Should there be a maximum number of subscriptions per subscriber? A user subscribing to 1000 individual agents would create query overhead. **Recommendation**: Start without limits, add a configurable cap (e.g., 100 per subscriber) if needed. Grove-scoped subscriptions naturally reduce the need for many individual subscriptions.
+Should there be a maximum number of subscriptions per subscriber? A user subscribing to 1000 individual agents would create query overhead. **Decision**: No limits initially. Grove-scoped subscriptions naturally reduce the need for many individual subscriptions. A configurable cap can be added later if needed.
 
 ### 2. Trigger Activity Editing
-Should updating trigger activities on an existing subscription be supported, or should users delete and recreate? **Recommendation**: Support a PATCH/PUT endpoint for modifying `triggerActivities` on an existing subscription. This is cleaner UX than delete+recreate.
+Should updating trigger activities on an existing subscription be supported, or should users delete and recreate? **Decision**: Support a PATCH endpoint for modifying `triggerActivities` on an existing subscription. This is cleaner UX than delete+recreate.
 
 ### 3. Subscription Persistence After Agent Deletion
-Agent-scoped subscriptions cascade-delete when the agent is deleted (via FK constraint). Should there be a notification that the watched agent was deleted? **Recommendation**: Yes — treat agent deletion as a notification-worthy event (new trigger activity: `DELETED`). The notification is generated before the cascade delete removes the subscription.
+Agent-scoped subscriptions cascade-delete when the agent is deleted (via FK constraint). Should there be a notification that the watched agent was deleted? **Decision**: Yes — treat agent deletion as a notification-worthy event (new trigger activity: `DELETED`). The notification is generated before the cascade delete removes the subscription. This aligns naturally with the existing soft-delete model where deletion is a state change.
 
 ### 4. Authorization Model
 Who can subscribe to what?
@@ -460,16 +459,16 @@ Who can subscribe to what?
 - **Agents**: Can subscribe to any agent in their grove (same grove only, enforced by JWT scope)
 - **Cross-grove subscriptions**: Not supported initially
 
-**Recommendation**: Follow existing authorization patterns — use grove membership or read access as the gate.
+**Decision**: Follow existing authorization patterns — use grove membership or read access as the gate.
 
 ### 5. `--notify` Flag Behavior
-Should `--notify` continue to create subscriptions as a side-effect, or should it be refactored to call the subscription API internally? **Recommendation**: Refactor `--notify` to use the new subscription API internally. This unifies the code path and ensures `--notify` subscriptions appear in `scion notifications subscriptions` listings.
+Should `--notify` continue to create subscriptions as a side-effect, or should it be refactored to call the subscription API internally? **Decision**: Refactor `--notify` to use the new subscription API internally. This unifies the code path, reduces tech debt, and ensures `--notify` subscriptions appear in `scion notifications subscriptions` listings.
 
 ### 6. Notification Channels for Subscriptions
-Should grove-scoped subscriptions also dispatch to external channels (Slack, webhooks)? **Recommendation**: Yes — channel dispatch is subscriber-type-dependent (user subscribers get channels), not scope-dependent. Both agent-scoped and grove-scoped subscriptions for user subscribers should dispatch to channels.
+Should grove-scoped subscriptions also dispatch to external channels (Slack, webhooks)? **Decision**: Yes — channel dispatch is subscriber-type-dependent (user subscribers get channels), not scope-dependent. Both agent-scoped and grove-scoped subscriptions for user subscribers should dispatch to channels. Notification channels should support brokered channel providers via the broker plugin system.
 
 ### 7. CLI Command Placement
-The design places commands under `scion notifications` (top-level). An alternative is `scion hub notifications subscribe`. **Recommendation**: Top-level `scion notifications` is better — it's shorter, and notifications are conceptually a platform feature, not specifically a "hub admin" action. The `hub` prefix suggests infrastructure management.
+The design places commands under `scion notifications` (top-level). An alternative is `scion hub notifications subscribe`. **Decision**: Top-level `scion notifications` — it's shorter, notifications are a platform feature (not a "hub admin" action), and the common case is subscribing within the same grove.
 
 ---
 
@@ -498,9 +497,8 @@ The design places commands under `scion notifications` (top-level). An alternati
 2. Implement `scion notifications subscribe` with `--agent`, `--grove`, `--triggers` flags
 3. Implement `scion notifications unsubscribe` command
 4. Implement `scion notifications subscriptions` listing command
-5. Migrate `scion hub notifications` / `scion hub notifications ack` as aliases under new group
-6. Add deprecation notice on old `hub notifications` path
-7. Write CLI integration tests
+5. Move `scion hub notifications` / `scion hub notifications ack` to the new `scion notifications` group (remove old commands)
+6. Write CLI integration tests
 
 ### Phase 3: Web UX
 **Goal**: Users can manage subscriptions and see subscription context in the browser.
