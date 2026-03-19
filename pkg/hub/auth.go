@@ -317,6 +317,10 @@ func isUnauthenticatedEndpoint(path string) bool {
 		return true
 	case "/api/v1/brokers/join": // Broker registration bootstrap (uses join token)
 		return true
+	case "/api/v1/webhooks/github": // GitHub App webhook (uses webhook signature verification)
+		return true
+	case "/github-app/setup": // GitHub App post-installation callback (browser redirect)
+		return true
 	}
 	return false
 }

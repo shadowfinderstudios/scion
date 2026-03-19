@@ -1,0 +1,545 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build !no_sqlite
+
+package hub
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/GoogleCloudPlatform/scion/pkg/store"
+)
+
+func TestExtractOwnerRepo(t *testing.T) {
+	tests := []struct {
+		name     string
+		remote   string
+		expected string
+	}{
+		{"https github", "https://github.com/acme/widgets.git", "acme/widgets"},
+		{"https github no .git", "https://github.com/acme/widgets", "acme/widgets"},
+		{"https github trailing slash", "https://github.com/acme/widgets/", "acme/widgets"},
+		{"ssh github", "git@github.com:acme/widgets.git", "acme/widgets"},
+		{"ssh github no .git", "git@github.com:acme/widgets", "acme/widgets"},
+		{"http github", "http://github.com/acme/widgets.git", "acme/widgets"},
+		{"github enterprise https", "https://github.example.com/org/repo.git", "org/repo"},
+		{"ssh with slash prefix", "git@github.com:/acme/widgets.git", "acme/widgets"},
+		{"empty", "", ""},
+		{"just hostname", "github.com", ""},
+		{"no repo", "https://github.com/acme", ""},
+		{"too many parts", "https://github.com/a/b/c", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractOwnerRepo(tc.remote)
+			if result != tc.expected {
+				t.Errorf("extractOwnerRepo(%q) = %q, want %q", tc.remote, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestIsValidOwnerRepo(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"acme/widgets", true},
+		{"a/b", true},
+		{"", false},
+		{"acme", false},
+		{"/repo", false},
+		{"owner/", false},
+		{"a/b/c", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			result := isValidOwnerRepo(tc.input)
+			if result != tc.expected {
+				t.Errorf("isValidOwnerRepo(%q) = %v, want %v", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+// signWebhookPayload creates a webhook signature for testing.
+func signWebhookPayload(payload []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	return fmt.Sprintf("sha256=%x", mac.Sum(nil))
+}
+
+// webhookTestServer creates a test server with the webhook secret configured.
+func webhookTestServer(t *testing.T) (*Server, store.Store) {
+	t.Helper()
+	srv, s := testServer(t)
+	srv.mu.Lock()
+	srv.config.GitHubAppConfig.WebhookSecret = "test-webhook-secret"
+	srv.config.GitHubAppConfig.WebhooksEnabled = true
+	srv.config.GitHubAppConfig.AppID = 42
+	srv.mu.Unlock()
+	return srv, s
+}
+
+func TestHandleGitHubWebhook_Ping(t *testing.T) {
+	srv, _ := webhookTestServer(t)
+
+	payload := []byte(`{"zen":"Practicality beats purity."}`)
+	sig := signWebhookPayload(payload, "test-webhook-secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "ping")
+	req.Header.Set("X-GitHub-Delivery", "test-delivery-1")
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]string
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["status"] != "pong" {
+		t.Errorf("expected pong, got %s", resp["status"])
+	}
+}
+
+func TestHandleGitHubWebhook_InvalidSignature(t *testing.T) {
+	srv, _ := webhookTestServer(t)
+
+	payload := []byte(`{"action":"created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "installation")
+	req.Header.Set("X-Hub-Signature-256", "sha256=badsignature")
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGitHubWebhook_InstallationCreated(t *testing.T) {
+	srv, s := webhookTestServer(t)
+	ctx := context.Background()
+
+	// Create a grove with a matching git remote
+	grove := &store.Grove{
+		ID:        "grove-1",
+		Name:      "Test Grove",
+		Slug:      "test-grove",
+		GitRemote: "https://github.com/acme/widgets.git",
+		Created:   time.Now(),
+		Updated:   time.Now(),
+	}
+	if err := s.CreateGrove(ctx, grove); err != nil {
+		t.Fatalf("failed to create grove: %v", err)
+	}
+
+	payload := mustJSON(t, map[string]interface{}{
+		"action": "created",
+		"installation": map[string]interface{}{
+			"id":     12345,
+			"app_id": 42,
+			"account": map[string]interface{}{
+				"login": "acme",
+				"type":  "Organization",
+			},
+			"repository_selection": "selected",
+		},
+		"repositories": []map[string]interface{}{
+			{"id": 1, "full_name": "acme/widgets", "name": "widgets"},
+			{"id": 2, "full_name": "acme/api", "name": "api"},
+		},
+	})
+
+	sig := signWebhookPayload(payload, "test-webhook-secret")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "installation")
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify installation was recorded
+	installation, err := s.GetGitHubInstallation(ctx, 12345)
+	if err != nil {
+		t.Fatalf("installation not found: %v", err)
+	}
+	if installation.AccountLogin != "acme" {
+		t.Errorf("expected account acme, got %s", installation.AccountLogin)
+	}
+	if installation.Status != store.GitHubInstallationStatusActive {
+		t.Errorf("expected active status, got %s", installation.Status)
+	}
+
+	// Verify grove was auto-associated
+	updatedGrove, err := s.GetGrove(ctx, "grove-1")
+	if err != nil {
+		t.Fatalf("failed to get grove: %v", err)
+	}
+	if updatedGrove.GitHubInstallationID == nil {
+		t.Fatal("expected grove to be associated with installation")
+	}
+	if *updatedGrove.GitHubInstallationID != 12345 {
+		t.Errorf("expected installation ID 12345, got %d", *updatedGrove.GitHubInstallationID)
+	}
+	if updatedGrove.GitHubAppStatus == nil {
+		t.Fatal("expected grove to have GitHub App status")
+	}
+	if updatedGrove.GitHubAppStatus.State != store.GitHubAppStateUnchecked {
+		t.Errorf("expected unchecked state, got %s", updatedGrove.GitHubAppStatus.State)
+	}
+}
+
+func TestHandleGitHubWebhook_InstallationDeleted(t *testing.T) {
+	srv, s := webhookTestServer(t)
+	ctx := context.Background()
+
+	// Pre-create installation
+	installationID := int64(12345)
+	installation := &store.GitHubInstallation{
+		InstallationID: installationID,
+		AccountLogin:   "acme",
+		AccountType:    "Organization",
+		AppID:          42,
+		Status:         store.GitHubInstallationStatusActive,
+	}
+	if err := s.CreateGitHubInstallation(ctx, installation); err != nil {
+		t.Fatalf("failed to create installation: %v", err)
+	}
+
+	// Create a grove associated with the installation
+	grove := &store.Grove{
+		ID:                   "grove-1",
+		Name:                 "Test Grove",
+		Slug:                 "test-grove",
+		GitRemote:            "https://github.com/acme/widgets.git",
+		GitHubInstallationID: &installationID,
+		GitHubAppStatus:      &store.GitHubAppGroveStatus{State: store.GitHubAppStateOK, LastChecked: time.Now()},
+		Created:              time.Now(),
+		Updated:              time.Now(),
+	}
+	if err := s.CreateGrove(ctx, grove); err != nil {
+		t.Fatalf("failed to create grove: %v", err)
+	}
+
+	payload := mustJSON(t, map[string]interface{}{
+		"action": "deleted",
+		"installation": map[string]interface{}{
+			"id":     12345,
+			"app_id": 42,
+			"account": map[string]interface{}{
+				"login": "acme",
+				"type":  "Organization",
+			},
+		},
+	})
+
+	sig := signWebhookPayload(payload, "test-webhook-secret")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "installation")
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Verify installation was marked deleted
+	updated, _ := s.GetGitHubInstallation(ctx, 12345)
+	if updated.Status != store.GitHubInstallationStatusDeleted {
+		t.Errorf("expected deleted status, got %s", updated.Status)
+	}
+
+	// Verify grove was set to error state
+	updatedGrove, _ := s.GetGrove(ctx, "grove-1")
+	if updatedGrove.GitHubAppStatus == nil || updatedGrove.GitHubAppStatus.State != store.GitHubAppStateError {
+		t.Errorf("expected grove error state, got %v", updatedGrove.GitHubAppStatus)
+	}
+}
+
+func TestHandleGitHubWebhook_InstallationReposRemoved(t *testing.T) {
+	srv, s := webhookTestServer(t)
+	ctx := context.Background()
+
+	installationID := int64(12345)
+	installation := &store.GitHubInstallation{
+		InstallationID: installationID,
+		AccountLogin:   "acme",
+		AccountType:    "Organization",
+		AppID:          42,
+		Repositories:   []string{"acme/widgets", "acme/api"},
+		Status:         store.GitHubInstallationStatusActive,
+	}
+	if err := s.CreateGitHubInstallation(ctx, installation); err != nil {
+		t.Fatalf("failed to create installation: %v", err)
+	}
+
+	grove := &store.Grove{
+		ID:                   "grove-1",
+		Name:                 "Test Grove",
+		Slug:                 "test-grove",
+		GitRemote:            "https://github.com/acme/widgets.git",
+		GitHubInstallationID: &installationID,
+		GitHubAppStatus:      &store.GitHubAppGroveStatus{State: store.GitHubAppStateOK, LastChecked: time.Now()},
+		Created:              time.Now(),
+		Updated:              time.Now(),
+	}
+	if err := s.CreateGrove(ctx, grove); err != nil {
+		t.Fatalf("failed to create grove: %v", err)
+	}
+
+	payload := mustJSON(t, map[string]interface{}{
+		"action":       "removed",
+		"installation": map[string]interface{}{"id": 12345},
+		"repositories_removed": []map[string]interface{}{
+			{"id": 1, "full_name": "acme/widgets", "name": "widgets"},
+		},
+		"repositories_added": []map[string]interface{}{},
+	})
+
+	sig := signWebhookPayload(payload, "test-webhook-secret")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "installation_repositories")
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Verify repo was removed from installation
+	updated, _ := s.GetGitHubInstallation(ctx, 12345)
+	if len(updated.Repositories) != 1 || updated.Repositories[0] != "acme/api" {
+		t.Errorf("expected [acme/api], got %v", updated.Repositories)
+	}
+
+	// Verify grove was set to error
+	updatedGrove, _ := s.GetGrove(ctx, "grove-1")
+	if updatedGrove.GitHubAppStatus == nil || updatedGrove.GitHubAppStatus.State != store.GitHubAppStateError {
+		t.Errorf("expected error state, got %v", updatedGrove.GitHubAppStatus)
+	}
+	if updatedGrove.GitHubAppStatus.ErrorCode != "repo_not_accessible" {
+		t.Errorf("expected repo_not_accessible error code, got %s", updatedGrove.GitHubAppStatus.ErrorCode)
+	}
+}
+
+func TestHandleGitHubWebhook_IgnoredEvent(t *testing.T) {
+	srv, _ := webhookTestServer(t)
+
+	payload := []byte(`{"action":"completed"}`)
+	sig := signWebhookPayload(payload, "test-webhook-secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "check_run")
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["status"] != "ignored" {
+		t.Errorf("expected ignored status, got %s", resp["status"])
+	}
+}
+
+func TestMatchGrovesToInstallation(t *testing.T) {
+	srv, s := webhookTestServer(t)
+	ctx := context.Background()
+
+	// Create groves with different git remotes
+	groves := []*store.Grove{
+		{ID: "g1", Name: "G1", Slug: "g1", GitRemote: "https://github.com/acme/widgets.git", Created: time.Now(), Updated: time.Now()},
+		{ID: "g2", Name: "G2", Slug: "g2", GitRemote: "https://github.com/acme/api.git", Created: time.Now(), Updated: time.Now()},
+		{ID: "g3", Name: "G3", Slug: "g3", GitRemote: "https://github.com/other/repo.git", Created: time.Now(), Updated: time.Now()},
+		{ID: "g4", Name: "G4", Slug: "g4", Created: time.Now(), Updated: time.Now()}, // No git remote
+	}
+
+	for _, g := range groves {
+		if err := s.CreateGrove(ctx, g); err != nil {
+			t.Fatalf("failed to create grove %s: %v", g.ID, err)
+		}
+	}
+
+	installation := &store.GitHubInstallation{
+		InstallationID: 12345,
+		AccountLogin:   "acme",
+		Repositories:   []string{"acme/widgets", "acme/api"},
+	}
+
+	matched := srv.matchGrovesToInstallation(ctx, installation)
+
+	if len(matched) != 2 {
+		t.Fatalf("expected 2 matched groves, got %d: %v", len(matched), matched)
+	}
+
+	// Verify both matching groves were associated
+	for _, gID := range []string{"g1", "g2"} {
+		grove, _ := s.GetGrove(ctx, gID)
+		if grove.GitHubInstallationID == nil {
+			t.Errorf("grove %s should be associated with installation", gID)
+		} else if *grove.GitHubInstallationID != 12345 {
+			t.Errorf("grove %s has wrong installation ID: %d", gID, *grove.GitHubInstallationID)
+		}
+	}
+
+	// Verify non-matching grove was NOT associated
+	g3, _ := s.GetGrove(ctx, "g3")
+	if g3.GitHubInstallationID != nil {
+		t.Error("grove g3 should not be associated")
+	}
+
+	// Verify no-remote grove was NOT associated
+	g4, _ := s.GetGrove(ctx, "g4")
+	if g4.GitHubInstallationID != nil {
+		t.Error("grove g4 should not be associated")
+	}
+}
+
+func TestMatchGrovesToInstallation_SkipsAlreadyAssociated(t *testing.T) {
+	srv, s := webhookTestServer(t)
+	ctx := context.Background()
+
+	otherInstallation := int64(99999)
+	grove := &store.Grove{
+		ID:                   "g1",
+		Name:                 "G1",
+		Slug:                 "g1",
+		GitRemote:            "https://github.com/acme/widgets.git",
+		GitHubInstallationID: &otherInstallation,
+		Created:              time.Now(),
+		Updated:              time.Now(),
+	}
+	if err := s.CreateGrove(ctx, grove); err != nil {
+		t.Fatalf("failed to create grove: %v", err)
+	}
+
+	installation := &store.GitHubInstallation{
+		InstallationID: 12345,
+		Repositories:   []string{"acme/widgets"},
+	}
+
+	matched := srv.matchGrovesToInstallation(ctx, installation)
+	if len(matched) != 0 {
+		t.Errorf("expected 0 matched groves (already associated), got %d", len(matched))
+	}
+
+	// Verify grove still has the original installation
+	updatedGrove, _ := s.GetGrove(ctx, "g1")
+	if *updatedGrove.GitHubInstallationID != 99999 {
+		t.Errorf("grove should still have original installation")
+	}
+}
+
+func TestHandleGitHubWebhook_MethodNotAllowed(t *testing.T) {
+	srv, _ := webhookTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/webhooks/github", nil)
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestHandleGitHubWebhook_InstallationCreatedIdempotent(t *testing.T) {
+	srv, s := webhookTestServer(t)
+	ctx := context.Background()
+
+	// Pre-create the installation
+	existing := &store.GitHubInstallation{
+		InstallationID: 12345,
+		AccountLogin:   "acme",
+		AccountType:    "Organization",
+		AppID:          42,
+		Status:         store.GitHubInstallationStatusActive,
+	}
+	if err := s.CreateGitHubInstallation(ctx, existing); err != nil {
+		t.Fatalf("failed to pre-create installation: %v", err)
+	}
+
+	payload := mustJSON(t, map[string]interface{}{
+		"action": "created",
+		"installation": map[string]interface{}{
+			"id":     12345,
+			"app_id": 42,
+			"account": map[string]interface{}{
+				"login": "acme",
+				"type":  "Organization",
+			},
+		},
+		"repositories": []map[string]interface{}{},
+	})
+
+	sig := signWebhookPayload(payload, "test-webhook-secret")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "installation")
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	rec := httptest.NewRecorder()
+	srv.handleGitHubWebhook(rec, req)
+
+	// Should succeed (idempotent)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (idempotent), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Installation should still exist
+	inst, err := s.GetGitHubInstallation(ctx, 12345)
+	if err != nil {
+		t.Fatalf("installation not found after idempotent create: %v", err)
+	}
+	if inst.Status != store.GitHubInstallationStatusActive {
+		t.Errorf("expected active, got %s", inst.Status)
+	}
+}
+
+func mustJSON(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal JSON: %v", err)
+	}
+	return data
+}

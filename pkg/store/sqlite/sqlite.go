@@ -1803,7 +1803,8 @@ func (s *SQLiteStore) ListGroves(ctx context.Context, filter store.GroveFilter, 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, name, slug, git_remote, default_runtime_broker_id, labels, annotations, shared_dirs, created_at, updated_at, created_by, owner_id, visibility
+		SELECT id, name, slug, git_remote, default_runtime_broker_id, labels, annotations, shared_dirs, created_at, updated_at, created_by, owner_id, visibility,
+		       github_installation_id, COALESCE(github_permissions, ''), COALESCE(github_app_status, '')
 		FROM groves %s ORDER BY created_at DESC LIMIT ?
 	`, whereClause)
 	args = append(args, limit)
@@ -1816,12 +1817,15 @@ func (s *SQLiteStore) ListGroves(ctx context.Context, filter store.GroveFilter, 
 
 	var groves []store.Grove
 	type groveRow struct {
-		grove        store.Grove
-		labels       string
-		annotations  string
-		sharedDirs   string
-		gitRemote    sql.NullString
-		brokerID     sql.NullString
+		grove                store.Grove
+		labels               string
+		annotations          string
+		sharedDirs           string
+		gitRemote            sql.NullString
+		brokerID             sql.NullString
+		githubInstallationID sql.NullInt64
+		githubPermissions    string
+		githubAppStatus      string
 	}
 	var rowData []groveRow
 
@@ -1831,6 +1835,7 @@ func (s *SQLiteStore) ListGroves(ctx context.Context, filter store.GroveFilter, 
 			&r.grove.ID, &r.grove.Name, &r.grove.Slug, &r.gitRemote, &r.brokerID,
 			&r.labels, &r.annotations, &r.sharedDirs,
 			&r.grove.Created, &r.grove.Updated, &r.grove.CreatedBy, &r.grove.OwnerID, &r.grove.Visibility,
+			&r.githubInstallationID, &r.githubPermissions, &r.githubAppStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -1846,9 +1851,21 @@ func (s *SQLiteStore) ListGroves(ctx context.Context, filter store.GroveFilter, 
 		if r.brokerID.Valid {
 			grove.DefaultRuntimeBrokerID = r.brokerID.String
 		}
+		if r.githubInstallationID.Valid {
+			id := r.githubInstallationID.Int64
+			grove.GitHubInstallationID = &id
+		}
 		unmarshalJSON(r.labels, &grove.Labels)
 		unmarshalJSON(r.annotations, &grove.Annotations)
 		unmarshalJSON(r.sharedDirs, &grove.SharedDirs)
+		if r.githubPermissions != "" {
+			grove.GitHubPermissions = &store.GitHubTokenPermissions{}
+			unmarshalJSON(r.githubPermissions, grove.GitHubPermissions)
+		}
+		if r.githubAppStatus != "" {
+			grove.GitHubAppStatus = &store.GitHubAppGroveStatus{}
+			unmarshalJSON(r.githubAppStatus, grove.GitHubAppStatus)
+		}
 
 		// Populate computed fields - these now have a connection available
 		s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents WHERE grove_id = ?", grove.ID).Scan(&grove.AgentCount)

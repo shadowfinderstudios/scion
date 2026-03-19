@@ -105,10 +105,17 @@ func (s *Server) handleGitHubAppInstallations(w http.ResponseWriter, r *http.Req
 	// Check if this is a sub-route (e.g., /api/v1/github-app/installations/{id})
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/github-app/installations")
 	if path != "" && path != "/" {
+		subPath := strings.TrimPrefix(path, "/")
+		subPath = strings.TrimSuffix(subPath, "/")
+
+		// Handle /discover sub-route
+		if subPath == "discover" {
+			s.handleGitHubAppDiscover(w, r)
+			return
+		}
+
 		// Sub-route: /api/v1/github-app/installations/{id}
-		idStr := strings.TrimPrefix(path, "/")
-		idStr = strings.TrimSuffix(idStr, "/")
-		installationID, err := strconv.ParseInt(idStr, 10, 64)
+		installationID, err := strconv.ParseInt(subPath, 10, 64)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid installation ID", nil)
 			return

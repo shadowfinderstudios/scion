@@ -100,18 +100,27 @@ type AgentTokenGenerator interface {
 	GenerateAgentToken(agentID, groveID string, additionalScopes ...AgentTokenScope) (string, error)
 }
 
+// GitHubAppTokenMinter mints GitHub App installation tokens for groves.
+type GitHubAppTokenMinter interface {
+	// MintGitHubAppTokenForGrove mints a GitHub App installation token for the given grove.
+	// Returns the token, expiry (ISO 8601 string), and any error.
+	// If the grove has no installation or the app is not configured, returns ("", "", nil).
+	MintGitHubAppTokenForGrove(ctx context.Context, grove *store.Grove) (token string, expiry string, err error)
+}
+
 // HTTPAgentDispatcher dispatches agent operations to remote runtime brokers via HTTP.
 // It looks up the runtime broker endpoint from the store and uses HTTPRuntimeBrokerClient
 // to make the actual API calls.
 type HTTPAgentDispatcher struct {
-	store          store.Store
-	client         RuntimeBrokerClient
-	tokenGenerator AgentTokenGenerator
-	secretBackend  secret.SecretBackend
-	hubEndpoint    string // Hub endpoint URL for agents to call back
-	devAuthToken   string // Dev auth token to inject into agent env (dev-auth mode only)
-	debug          bool
-	log            *slog.Logger
+	store               store.Store
+	client              RuntimeBrokerClient
+	tokenGenerator      AgentTokenGenerator
+	secretBackend       secret.SecretBackend
+	githubAppMinter     GitHubAppTokenMinter // Optional GitHub App token minter
+	hubEndpoint         string               // Hub endpoint URL for agents to call back
+	devAuthToken        string               // Dev auth token to inject into agent env (dev-auth mode only)
+	debug               bool
+	log                 *slog.Logger
 }
 
 // NewHTTPAgentDispatcher creates a new HTTP-based agent dispatcher.
@@ -153,6 +162,12 @@ func (d *HTTPAgentDispatcher) SetSecretBackend(b secret.SecretBackend) {
 // When set, agents receive SCION_DEV_TOKEN as a fallback authentication method.
 func (d *HTTPAgentDispatcher) SetDevAuthToken(token string) {
 	d.devAuthToken = token
+}
+
+// SetGitHubAppMinter sets the GitHub App token minter for resolving
+// GitHub App installation tokens during agent credential resolution.
+func (d *HTTPAgentDispatcher) SetGitHubAppMinter(m GitHubAppTokenMinter) {
+	d.githubAppMinter = m
 }
 
 // getBrokerEndpoint retrieves the endpoint URL for a runtime broker.
@@ -358,6 +373,40 @@ func (d *HTTPAgentDispatcher) buildCreateRequest(ctx context.Context, agent *sto
 					req.ResolvedEnv[s.Target] = s.Value
 				}
 			}
+		}
+	}
+
+	// GitHub App token minting: if GITHUB_TOKEN is not already set by secrets/env
+	// and the grove has a GitHub App installation, mint an installation token.
+	if d.githubAppMinter != nil && agent.GroveID != "" {
+		if req.ResolvedEnv == nil || req.ResolvedEnv["GITHUB_TOKEN"] == "" {
+			grove, groveErr := d.store.GetGrove(ctx, agent.GroveID)
+			if groveErr == nil && grove.GitHubInstallationID != nil {
+				token, expiry, mintErr := d.githubAppMinter.MintGitHubAppTokenForGrove(ctx, grove)
+				if mintErr != nil {
+					if d.debug {
+						d.log.Warn("buildCreateRequest: GitHub App token minting failed, falling back to PAT",
+							"error", mintErr, "groveID", agent.GroveID)
+					}
+					// Fall through — PAT from secrets/env may still be available
+				} else if token != "" {
+					if req.ResolvedEnv == nil {
+						req.ResolvedEnv = make(map[string]string)
+					}
+					req.ResolvedEnv["GITHUB_TOKEN"] = token
+					req.ResolvedEnv["SCION_GITHUB_APP_ENABLED"] = "true"
+					req.ResolvedEnv["SCION_GITHUB_TOKEN_EXPIRY"] = expiry
+					req.ResolvedEnv["SCION_GITHUB_TOKEN_PATH"] = "/tmp/.github-token"
+					if d.debug {
+						d.log.Debug("buildCreateRequest: injected GitHub App token",
+							"groveID", agent.GroveID,
+							"installationID", *grove.GitHubInstallationID,
+							"expiry", expiry)
+					}
+				}
+			}
+		} else if d.debug {
+			d.log.Debug("buildCreateRequest: GITHUB_TOKEN already set, skipping GitHub App token minting")
 		}
 	}
 
@@ -870,6 +919,27 @@ func (d *HTTPAgentDispatcher) DispatchAgentStart(ctx context.Context, agent *sto
 			}
 		} else if token != "" {
 			resolvedEnv["SCION_AUTH_TOKEN"] = token
+		}
+	}
+
+	// GitHub App token minting for agent start
+	if d.githubAppMinter != nil && agent.GroveID != "" {
+		if resolvedEnv["GITHUB_TOKEN"] == "" {
+			grove, groveErr := d.store.GetGrove(ctx, agent.GroveID)
+			if groveErr == nil && grove.GitHubInstallationID != nil {
+				token, expiry, mintErr := d.githubAppMinter.MintGitHubAppTokenForGrove(ctx, grove)
+				if mintErr != nil {
+					if d.debug {
+						d.log.Warn("DispatchAgentStart: GitHub App token minting failed",
+							"error", mintErr, "groveID", agent.GroveID)
+					}
+				} else if token != "" {
+					resolvedEnv["GITHUB_TOKEN"] = token
+					resolvedEnv["SCION_GITHUB_APP_ENABLED"] = "true"
+					resolvedEnv["SCION_GITHUB_TOKEN_EXPIRY"] = expiry
+					resolvedEnv["SCION_GITHUB_TOKEN_PATH"] = "/tmp/.github-token"
+				}
+			}
 		}
 	}
 

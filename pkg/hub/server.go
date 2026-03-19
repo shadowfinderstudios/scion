@@ -1000,6 +1000,11 @@ func (s *Server) CreateAuthenticatedDispatcher() *HTTPAgentDispatcher {
 		dispatcher.SetDevAuthToken(s.config.DevAuthToken)
 	}
 
+	// Configure GitHub App token minter if the app is configured
+	if s.config.GitHubAppConfig.AppID != 0 {
+		dispatcher.SetGitHubAppMinter(s)
+	}
+
 	return dispatcher
 }
 
@@ -1655,6 +1660,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/github-app", s.handleGitHubApp)
 	s.mux.HandleFunc("/api/v1/github-app/installations", s.handleGitHubAppInstallations)
 	s.mux.HandleFunc("/api/v1/github-app/installations/", s.handleGitHubAppInstallations)
+	s.mux.HandleFunc("/api/v1/github-app/installations/discover", s.handleGitHubAppDiscover)
+
+	// GitHub App webhook and setup callback (unauthenticated — uses webhook signature)
+	s.mux.HandleFunc("/api/v1/webhooks/github", s.handleGitHubWebhook)
+	s.mux.HandleFunc("/github-app/setup", s.handleGitHubAppSetup)
 }
 
 // applyMiddleware wraps the handler with middleware.

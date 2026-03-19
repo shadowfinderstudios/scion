@@ -18,7 +18,9 @@ package githubapp
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -387,6 +389,196 @@ func classifyGitHubError(statusCode int, body []byte) *TokenMintError {
 			Message:    fmt.Sprintf("GitHub API error (status %d): %s", statusCode, msg),
 		}
 	}
+}
+
+// Installation represents a GitHub App installation as returned by the GitHub API.
+type Installation struct {
+	ID      int64  `json:"id"`
+	Account struct {
+		Login string `json:"login"`
+		Type  string `json:"type"` // "Organization" or "User"
+	} `json:"account"`
+	AppID               int64    `json:"app_id"`
+	TargetType          string   `json:"target_type"`
+	RepositorySelection string   `json:"repository_selection"` // "all" or "selected"
+	SuspendedAt         *string  `json:"suspended_at"`
+}
+
+// InstallationRepository represents a repository accessible to a GitHub App installation.
+type InstallationRepository struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	FullName string `json:"full_name"` // "owner/repo"
+	Private  bool   `json:"private"`
+}
+
+// GetInstallation retrieves a specific installation by ID.
+func (c *Client) GetInstallation(ctx context.Context, installationID int64) (*Installation, error) {
+	jwtToken, err := c.GenerateJWT()
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/app/installations/%d", c.apiBaseURL, installationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, classifyGitHubError(resp.StatusCode, body)
+	}
+
+	var installation Installation
+	if err := json.Unmarshal(body, &installation); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &installation, nil
+}
+
+// ListInstallations lists all installations for the authenticated app.
+func (c *Client) ListInstallations(ctx context.Context) ([]Installation, error) {
+	jwtToken, err := c.GenerateJWT()
+	if err != nil {
+		return nil, err
+	}
+
+	var allInstallations []Installation
+	page := 1
+
+	for {
+		url := fmt.Sprintf("%s/app/installations?per_page=100&page=%d", c.apiBaseURL, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+jwtToken)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("HTTP request failed: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, classifyGitHubError(resp.StatusCode, body)
+		}
+
+		var installations []Installation
+		if err := json.Unmarshal(body, &installations); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		allInstallations = append(allInstallations, installations...)
+
+		if len(installations) < 100 {
+			break
+		}
+		page++
+	}
+
+	return allInstallations, nil
+}
+
+// ListInstallationRepos lists repositories accessible to an installation.
+// Uses an installation access token (not JWT).
+func (c *Client) ListInstallationRepos(ctx context.Context, installationID int64) ([]InstallationRepository, error) {
+	// First mint a token for this installation with minimal permissions
+	token, err := c.MintInstallationToken(ctx, installationID, nil, TokenPermissions{Metadata: "read"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to mint token for repo listing: %w", err)
+	}
+
+	var allRepos []InstallationRepository
+	page := 1
+
+	for {
+		url := fmt.Sprintf("%s/installation/repositories?per_page=100&page=%d", c.apiBaseURL, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+token.Token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("HTTP request failed: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("failed to list repos (status %d): %s", resp.StatusCode, string(body))
+		}
+
+		var result struct {
+			Repositories []InstallationRepository `json:"repositories"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		allRepos = append(allRepos, result.Repositories...)
+
+		if len(result.Repositories) < 100 {
+			break
+		}
+		page++
+	}
+
+	return allRepos, nil
+}
+
+// VerifyWebhookSignature validates a GitHub webhook payload signature.
+// GitHub sends the signature in the X-Hub-Signature-256 header as "sha256=<hex>".
+func VerifyWebhookSignature(payload []byte, signature string, secret string) bool {
+	if secret == "" || signature == "" {
+		return false
+	}
+
+	const prefix = "sha256="
+	if !strings.HasPrefix(signature, prefix) {
+		return false
+	}
+	sigHex := signature[len(prefix):]
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	expectedMAC := mac.Sum(nil)
+	expectedHex := fmt.Sprintf("%x", expectedMAC)
+
+	return hmac.Equal([]byte(sigHex), []byte(expectedHex))
 }
 
 // GetApp retrieves the authenticated GitHub App's information.
