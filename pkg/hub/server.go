@@ -106,6 +106,18 @@ type ServerConfig struct {
 	// MaxSubscriptionsPerUser is the maximum number of notification subscriptions
 	// allowed per subscriber. Zero means unlimited (default).
 	MaxSubscriptionsPerUser int
+	// GitHubAppConfig holds the GitHub App configuration for agent git authentication.
+	GitHubAppConfig GitHubAppServerConfig
+}
+
+// GitHubAppServerConfig holds the GitHub App configuration for the Hub server.
+type GitHubAppServerConfig struct {
+	AppID           int64
+	PrivateKeyPath  string
+	PrivateKey      string
+	WebhookSecret   string
+	APIBaseURL      string
+	WebhooksEnabled bool
 }
 
 // DefaultServerConfig returns the default server configuration.
@@ -1638,6 +1650,11 @@ func (s *Server) registerRoutes() {
 
 	// Public settings endpoint (no auth required for telemetry default, etc.)
 	s.mux.HandleFunc("/api/v1/settings/public", s.handlePublicSettings)
+
+	// GitHub App integration endpoints
+	s.mux.HandleFunc("/api/v1/github-app", s.handleGitHubApp)
+	s.mux.HandleFunc("/api/v1/github-app/installations", s.handleGitHubAppInstallations)
+	s.mux.HandleFunc("/api/v1/github-app/installations/", s.handleGitHubAppInstallations)
 }
 
 // applyMiddleware wraps the handler with middleware.

@@ -182,6 +182,19 @@ type GlobalConfig struct {
 	// Telemetry default — when set, the Hub exposes this as the default telemetry opt-in
 	// state for new agents via GET /api/v1/settings/public.
 	TelemetryEnabled *bool `json:"telemetryEnabled,omitempty" yaml:"telemetryEnabled,omitempty" koanf:"telemetryEnabled"`
+
+	// GitHub App settings
+	GitHubApp GitHubAppConfig `json:"githubApp" yaml:"githubApp" koanf:"githubApp"`
+}
+
+// GitHubAppConfig holds configuration for the Hub's GitHub App integration.
+type GitHubAppConfig struct {
+	AppID           int64  `json:"appId" yaml:"appId" koanf:"appId"`
+	PrivateKeyPath  string `json:"privateKeyPath,omitempty" yaml:"privateKeyPath,omitempty" koanf:"privateKeyPath"`
+	PrivateKey      string `json:"privateKey,omitempty" yaml:"privateKey,omitempty" koanf:"privateKey"`
+	WebhookSecret   string `json:"webhookSecret,omitempty" yaml:"webhookSecret,omitempty" koanf:"webhookSecret"`
+	APIBaseURL      string `json:"apiBaseUrl,omitempty" yaml:"apiBaseUrl,omitempty" koanf:"apiBaseUrl"`
+	WebhooksEnabled bool   `json:"webhooksEnabled,omitempty" yaml:"webhooksEnabled,omitempty" koanf:"webhooksEnabled"`
 }
 
 // SecretsConfig holds configuration for the secrets backend.

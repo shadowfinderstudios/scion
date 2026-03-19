@@ -3100,6 +3100,24 @@ func (s *Server) handleGroveRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for nested /github-installation path
+	if subPath == "github-installation" {
+		s.handleGroveGitHubInstallation(w, r, groveID)
+		return
+	}
+
+	// Check for nested /github-status path
+	if subPath == "github-status" {
+		s.handleGroveGitHubStatus(w, r, groveID)
+		return
+	}
+
+	// Check for nested /github-permissions path
+	if subPath == "github-permissions" {
+		s.handleGroveGitHubPermissions(w, r, groveID)
+		return
+	}
+
 	// Otherwise handle as grove resource
 	s.handleGroveByIDInternal(w, r, groveID, subPath)
 }

@@ -109,6 +109,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		migrationV32,
 		migrationV33,
 		migrationV34,
+		migrationV35,
 	}
 
 	// Create migrations table if not exists
@@ -824,6 +825,26 @@ CREATE INDEX IF NOT EXISTS idx_uat_user_id ON user_access_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_uat_key_hash ON user_access_tokens(key_hash);
 `
 
+// Migration V35: GitHub App installations and grove GitHub App fields.
+const migrationV35 = `
+CREATE TABLE IF NOT EXISTS github_installations (
+	installation_id INTEGER PRIMARY KEY,
+	account_login TEXT NOT NULL,
+	account_type TEXT NOT NULL DEFAULT 'Organization',
+	app_id INTEGER NOT NULL,
+	repositories TEXT NOT NULL DEFAULT '[]',
+	status TEXT NOT NULL DEFAULT 'active',
+	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_github_installations_account ON github_installations(account_login);
+CREATE INDEX IF NOT EXISTS idx_github_installations_status ON github_installations(status);
+
+ALTER TABLE groves ADD COLUMN github_installation_id INTEGER;
+ALTER TABLE groves ADD COLUMN github_permissions TEXT;
+ALTER TABLE groves ADD COLUMN github_app_status TEXT;
+`
+
 // Helper functions for JSON marshaling/unmarshaling
 func marshalJSON(v interface{}) string {
 	if v == nil {
@@ -859,6 +880,28 @@ func nullableTime(t time.Time) sql.NullTime {
 		return sql.NullTime{Valid: false}
 	}
 	return sql.NullTime{Time: t, Valid: true}
+}
+
+// nullableInt64 returns a sql.NullInt64 for database insertion.
+// Nil pointers become NULL.
+func nullableInt64(v *int64) sql.NullInt64 {
+	if v == nil {
+		return sql.NullInt64{Valid: false}
+	}
+	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+// marshalJSONPtr marshals a pointer value to JSON string, returning empty string for nil pointers.
+// Unlike marshalJSON, this correctly detects nil typed pointers.
+func marshalJSONPtr[T any](v *T) string {
+	if v == nil {
+		return ""
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // ============================================================================
@@ -1542,12 +1585,13 @@ func (s *SQLiteStore) CreateGrove(ctx context.Context, grove *store.Grove) error
 	grove.Updated = now
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO groves (id, name, slug, git_remote, default_runtime_broker_id, labels, annotations, shared_dirs, created_at, updated_at, created_by, owner_id, visibility)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO groves (id, name, slug, git_remote, default_runtime_broker_id, labels, annotations, shared_dirs, created_at, updated_at, created_by, owner_id, visibility, github_installation_id, github_permissions, github_app_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		grove.ID, grove.Name, grove.Slug, nullableString(grove.GitRemote), nullableString(grove.DefaultRuntimeBrokerID),
 		marshalJSON(grove.Labels), marshalJSON(grove.Annotations), marshalJSON(grove.SharedDirs),
 		grove.Created, grove.Updated, grove.CreatedBy, grove.OwnerID, grove.Visibility,
+		nullableInt64(grove.GitHubInstallationID), marshalJSONPtr(grove.GitHubPermissions), marshalJSONPtr(grove.GitHubAppStatus),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -1562,14 +1606,17 @@ func (s *SQLiteStore) GetGrove(ctx context.Context, id string) (*store.Grove, er
 	grove := &store.Grove{}
 	var labels, annotations, sharedDirs string
 	var gitRemote, defaultRuntimeBrokerID sql.NullString
+	var githubInstallationID sql.NullInt64
+	var githubPermissions, githubAppStatus string
 
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name, slug, git_remote, default_runtime_broker_id, labels, annotations, shared_dirs, created_at, updated_at, created_by, owner_id, visibility
+		SELECT id, name, slug, git_remote, default_runtime_broker_id, labels, annotations, shared_dirs, created_at, updated_at, created_by, owner_id, visibility, github_installation_id, COALESCE(github_permissions, ''), COALESCE(github_app_status, '')
 		FROM groves WHERE id = ?
 	`, id).Scan(
 		&grove.ID, &grove.Name, &grove.Slug, &gitRemote, &defaultRuntimeBrokerID,
 		&labels, &annotations, &sharedDirs,
 		&grove.Created, &grove.Updated, &grove.CreatedBy, &grove.OwnerID, &grove.Visibility,
+		&githubInstallationID, &githubPermissions, &githubAppStatus,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1584,9 +1631,21 @@ func (s *SQLiteStore) GetGrove(ctx context.Context, id string) (*store.Grove, er
 	if defaultRuntimeBrokerID.Valid {
 		grove.DefaultRuntimeBrokerID = defaultRuntimeBrokerID.String
 	}
+	if githubInstallationID.Valid {
+		id := githubInstallationID.Int64
+		grove.GitHubInstallationID = &id
+	}
 	unmarshalJSON(labels, &grove.Labels)
 	unmarshalJSON(annotations, &grove.Annotations)
 	unmarshalJSON(sharedDirs, &grove.SharedDirs)
+	if githubPermissions != "" {
+		grove.GitHubPermissions = &store.GitHubTokenPermissions{}
+		unmarshalJSON(githubPermissions, grove.GitHubPermissions)
+	}
+	if githubAppStatus != "" {
+		grove.GitHubAppStatus = &store.GitHubAppGroveStatus{}
+		unmarshalJSON(githubAppStatus, grove.GitHubAppStatus)
+	}
 
 	// Populate computed fields
 	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents WHERE grove_id = ?", id).Scan(&grove.AgentCount)
@@ -1659,12 +1718,14 @@ func (s *SQLiteStore) UpdateGrove(ctx context.Context, grove *store.Grove) error
 		UPDATE groves SET
 			name = ?, slug = ?, git_remote = ?, default_runtime_broker_id = ?,
 			labels = ?, annotations = ?, shared_dirs = ?,
-			updated_at = ?, owner_id = ?, visibility = ?
+			updated_at = ?, owner_id = ?, visibility = ?,
+			github_installation_id = ?, github_permissions = ?, github_app_status = ?
 		WHERE id = ?
 	`,
 		grove.Name, grove.Slug, nullableString(grove.GitRemote), nullableString(grove.DefaultRuntimeBrokerID),
 		marshalJSON(grove.Labels), marshalJSON(grove.Annotations), marshalJSON(grove.SharedDirs),
 		grove.Updated, grove.OwnerID, grove.Visibility,
+		nullableInt64(grove.GitHubInstallationID), marshalJSONPtr(grove.GitHubPermissions), marshalJSONPtr(grove.GitHubAppStatus),
 		grove.ID,
 	)
 	if err != nil {

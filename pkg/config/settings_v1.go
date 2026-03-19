@@ -275,6 +275,19 @@ type V1ServerConfig struct {
 	// Plugins configures external plugin loading for message brokers and harnesses.
 	// Plugins run as separate processes using hashicorp/go-plugin.
 	Plugins *V1PluginsConfig `json:"plugins,omitempty" yaml:"plugins,omitempty" koanf:"plugins"`
+
+	// GitHubApp configures the Hub's GitHub App integration for agent git authentication.
+	GitHubApp *V1GitHubAppConfig `json:"github_app,omitempty" yaml:"github_app,omitempty" koanf:"github_app"`
+}
+
+// V1GitHubAppConfig holds the GitHub App configuration in settings.yaml format.
+type V1GitHubAppConfig struct {
+	AppID           int64  `json:"app_id,omitempty" yaml:"app_id,omitempty" koanf:"app_id"`
+	PrivateKeyPath  string `json:"private_key_path,omitempty" yaml:"private_key_path,omitempty" koanf:"private_key_path"`
+	PrivateKey      string `json:"private_key,omitempty" yaml:"private_key,omitempty" koanf:"private_key"`
+	WebhookSecret   string `json:"webhook_secret,omitempty" yaml:"webhook_secret,omitempty" koanf:"webhook_secret"`
+	APIBaseURL      string `json:"api_base_url,omitempty" yaml:"api_base_url,omitempty" koanf:"api_base_url"`
+	WebhooksEnabled bool   `json:"webhooks_enabled,omitempty" yaml:"webhooks_enabled,omitempty" koanf:"webhooks_enabled"`
 }
 
 // V1NotificationChannelConfig holds configuration for an external notification channel.
@@ -1047,6 +1060,16 @@ func ConvertV1ServerToGlobalConfig(v1 *V1ServerConfig) *GlobalConfig {
 		}
 	}
 
+	// GitHub App
+	if v1.GitHubApp != nil {
+		gc.GitHubApp.AppID = v1.GitHubApp.AppID
+		gc.GitHubApp.PrivateKeyPath = v1.GitHubApp.PrivateKeyPath
+		gc.GitHubApp.PrivateKey = v1.GitHubApp.PrivateKey
+		gc.GitHubApp.WebhookSecret = v1.GitHubApp.WebhookSecret
+		gc.GitHubApp.APIBaseURL = v1.GitHubApp.APIBaseURL
+		gc.GitHubApp.WebhooksEnabled = v1.GitHubApp.WebhooksEnabled
+	}
+
 	return &gc
 }
 
@@ -1150,6 +1173,18 @@ func ConvertGlobalToV1ServerConfig(gc *GlobalConfig) *V1ServerConfig {
 		Backend:        gc.Secrets.Backend,
 		GCPProjectID:   gc.Secrets.GCPProjectID,
 		GCPCredentials: gc.Secrets.GCPCredentials,
+	}
+
+	// GitHub App config
+	if gc.GitHubApp.AppID != 0 {
+		v1.GitHubApp = &V1GitHubAppConfig{
+			AppID:           gc.GitHubApp.AppID,
+			PrivateKeyPath:  gc.GitHubApp.PrivateKeyPath,
+			PrivateKey:      gc.GitHubApp.PrivateKey,
+			WebhookSecret:   gc.GitHubApp.WebhookSecret,
+			APIBaseURL:      gc.GitHubApp.APIBaseURL,
+			WebhooksEnabled: gc.GitHubApp.WebhooksEnabled,
+		}
 	}
 
 	return v1

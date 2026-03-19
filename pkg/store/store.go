@@ -90,6 +90,9 @@ type Store interface {
 
 	// GCP Service Account operations (GCP Identity for Agents)
 	GCPServiceAccountStore
+
+	// GitHub App Installation operations
+	GitHubInstallationStore
 }
 
 // AgentStore defines agent-related persistence operations.
@@ -883,4 +886,37 @@ type GCPServiceAccountFilter struct {
 	Scope   string // Filter by scope (hub, grove, user)
 	ScopeID string // Filter by scope ID
 	Email   string // Filter by SA email
+}
+
+// =============================================================================
+// GitHub App Installations
+// =============================================================================
+
+// GitHubInstallationStore defines GitHub App installation persistence operations.
+type GitHubInstallationStore interface {
+	// CreateGitHubInstallation creates a new GitHub App installation record.
+	// Uses installation_id as the natural key — creating an existing one is idempotent (no-op).
+	CreateGitHubInstallation(ctx context.Context, installation *GitHubInstallation) error
+
+	// GetGitHubInstallation retrieves a GitHub App installation by installation ID.
+	// Returns ErrNotFound if the installation doesn't exist.
+	GetGitHubInstallation(ctx context.Context, installationID int64) (*GitHubInstallation, error)
+
+	// UpdateGitHubInstallation updates an existing GitHub App installation.
+	// Returns ErrNotFound if the installation doesn't exist.
+	UpdateGitHubInstallation(ctx context.Context, installation *GitHubInstallation) error
+
+	// DeleteGitHubInstallation removes a GitHub App installation by installation ID.
+	// Returns ErrNotFound if the installation doesn't exist.
+	DeleteGitHubInstallation(ctx context.Context, installationID int64) error
+
+	// ListGitHubInstallations returns all GitHub App installations matching the filter.
+	ListGitHubInstallations(ctx context.Context, filter GitHubInstallationFilter) ([]GitHubInstallation, error)
+}
+
+// GitHubInstallationFilter defines criteria for filtering GitHub App installations.
+type GitHubInstallationFilter struct {
+	AccountLogin string // Filter by GitHub account login
+	Status       string // Filter by status (active, suspended, deleted)
+	AppID        int64  // Filter by app ID
 }

@@ -170,6 +170,11 @@ type Grove struct {
 	// Configuration (stored as JSON)
 	SharedDirs []api.SharedDir `json:"sharedDirs,omitempty"`
 
+	// GitHub App integration
+	GitHubInstallationID *int64                  `json:"githubInstallationId,omitempty"`
+	GitHubPermissions    *GitHubTokenPermissions  `json:"githubPermissions,omitempty"`
+	GitHubAppStatus      *GitHubAppGroveStatus    `json:"githubAppStatus,omitempty"`
+
 	// Computed fields (not stored, populated on read)
 	AgentCount        int    `json:"agentCount,omitempty"`
 	ActiveBrokerCount int    `json:"activeBrokerCount,omitempty"`
@@ -1130,4 +1135,56 @@ func (g *Grove) ToAPI() *api.GroveInfo {
 		// Statistics
 		AgentCount: g.AgentCount,
 	}
+}
+
+// =============================================================================
+// GitHub App Integration
+// =============================================================================
+
+// GitHubInstallation represents a GitHub App installation registered on the Hub.
+type GitHubInstallation struct {
+	InstallationID int64     `json:"installation_id"`
+	AccountLogin   string    `json:"account_login"`
+	AccountType    string    `json:"account_type"` // "Organization" or "User"
+	AppID          int64     `json:"app_id"`
+	Repositories   []string  `json:"repositories,omitempty"`
+	Status         string    `json:"status"` // "active", "suspended", "deleted"
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// GitHub installation status constants.
+const (
+	GitHubInstallationStatusActive    = "active"
+	GitHubInstallationStatusSuspended = "suspended"
+	GitHubInstallationStatusDeleted   = "deleted"
+)
+
+// GitHubAppGroveStatus represents the health of the GitHub App integration for a grove.
+type GitHubAppGroveStatus struct {
+	State         string     `json:"state"`
+	ErrorCode     string     `json:"error_code,omitempty"`
+	ErrorMessage  string     `json:"error_message,omitempty"`
+	LastTokenMint *time.Time `json:"last_token_mint,omitempty"`
+	LastError     *time.Time `json:"last_error,omitempty"`
+	LastChecked   time.Time  `json:"last_checked"`
+}
+
+// GitHub App state constants.
+const (
+	GitHubAppStateOK        = "ok"
+	GitHubAppStateDegraded  = "degraded"
+	GitHubAppStateError     = "error"
+	GitHubAppStateUnchecked = "unchecked"
+)
+
+// GitHubTokenPermissions specifies the permissions to request when minting
+// installation tokens for a grove.
+type GitHubTokenPermissions struct {
+	Contents     string `json:"contents,omitempty"`
+	PullRequests string `json:"pull_requests,omitempty"`
+	Issues       string `json:"issues,omitempty"`
+	Metadata     string `json:"metadata,omitempty"`
+	Checks       string `json:"checks,omitempty"`
+	Actions      string `json:"actions,omitempty"`
 }
