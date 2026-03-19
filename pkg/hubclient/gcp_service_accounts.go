@@ -62,7 +62,7 @@ type GCPServiceAccount struct {
 // CreateGCPServiceAccountRequest is the request for registering a GCP SA.
 type CreateGCPServiceAccountRequest struct {
 	Email       string   `json:"email"`
-	ProjectID   string   `json:"project_id"`
+	ProjectID   string   `json:"project_id,omitempty"`
 	DisplayName string   `json:"display_name,omitempty"`
 	Scopes      []string `json:"default_scopes,omitempty"`
 }

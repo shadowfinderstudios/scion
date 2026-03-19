@@ -76,7 +76,7 @@ func TestCreateGCPServiceAccount_MissingEmail(t *testing.T) {
 	assert.Contains(t, errResp.Error.Message, "email")
 }
 
-func TestCreateGCPServiceAccount_MissingProjectID(t *testing.T) {
+func TestCreateGCPServiceAccount_ProjectIDAutoExtracted(t *testing.T) {
 	srv, s := testServer(t)
 	groveID := createTestGroveForSA(t, srv, s)
 
@@ -86,15 +86,33 @@ func TestCreateGCPServiceAccount_MissingProjectID(t *testing.T) {
 
 	rec := doRequest(t, srv, http.MethodPost,
 		fmt.Sprintf("/api/v1/groves/%s/gcp-service-accounts", groveID), body)
-	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
-	var errResp ErrorResponse
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&errResp))
-	assert.Equal(t, ErrCodeInvalidRequest, errResp.Error.Code)
-	assert.Contains(t, errResp.Error.Message, "project_id")
+	var sa store.GCPServiceAccount
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&sa))
+	assert.Equal(t, "agent@my-project.iam.gserviceaccount.com", sa.Email)
+	assert.Equal(t, "my-project", sa.ProjectID, "project_id should be auto-extracted from email")
 }
 
-func TestCreateGCPServiceAccount_MissingBothFields(t *testing.T) {
+func TestCreateGCPServiceAccount_ProjectIDExplicit(t *testing.T) {
+	srv, s := testServer(t)
+	groveID := createTestGroveForSA(t, srv, s)
+
+	body := map[string]string{
+		"email":      "agent@my-project.iam.gserviceaccount.com",
+		"project_id": "override-project",
+	}
+
+	rec := doRequest(t, srv, http.MethodPost,
+		fmt.Sprintf("/api/v1/groves/%s/gcp-service-accounts", groveID), body)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+
+	var sa store.GCPServiceAccount
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&sa))
+	assert.Equal(t, "override-project", sa.ProjectID, "explicit project_id should take precedence")
+}
+
+func TestCreateGCPServiceAccount_EmptyBody(t *testing.T) {
 	srv, s := testServer(t)
 	groveID := createTestGroveForSA(t, srv, s)
 
@@ -106,7 +124,6 @@ func TestCreateGCPServiceAccount_MissingBothFields(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&errResp))
 	assert.Equal(t, ErrCodeInvalidRequest, errResp.Error.Code)
 	assert.Contains(t, errResp.Error.Message, "email")
-	assert.Contains(t, errResp.Error.Message, "project_id")
 }
 
 func TestCreateGCPServiceAccount_InvalidJSON(t *testing.T) {

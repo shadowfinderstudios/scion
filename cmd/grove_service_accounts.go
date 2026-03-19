@@ -40,7 +40,8 @@ material is stored — the Hub impersonates the SA at token-generation time.
 
 Examples:
   scion grove service-accounts list
-  scion grove service-accounts add agent-worker@project.iam.gserviceaccount.com --project my-project
+  scion grove service-accounts add agent-worker@my-project.iam.gserviceaccount.com
+  scion grove service-accounts add agent-worker@my-project.iam.gserviceaccount.com --project my-project
   scion grove service-accounts verify <id>
   scion grove service-accounts remove <id>`,
 }
@@ -55,7 +56,7 @@ IAM Credentials API. The Hub's own service account must have
 roles/iam.serviceAccountTokenCreator on the target SA.
 
 Examples:
-  scion grove service-accounts add agent-worker@my-project.iam.gserviceaccount.com --project my-project
+  scion grove service-accounts add agent-worker@my-project.iam.gserviceaccount.com
   scion grove service-accounts add agent-worker@my-project.iam.gserviceaccount.com --project my-project --name "Worker SA"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSAAdd,
@@ -115,9 +116,8 @@ func init() {
 	groveServiceAccountsCmd.AddCommand(saRemoveCmd)
 	groveServiceAccountsCmd.AddCommand(saVerifyCmd)
 
-	saAddCmd.Flags().StringVar(&saProjectID, "project", "", "GCP project ID (required)")
+	saAddCmd.Flags().StringVar(&saProjectID, "project", "", "GCP project ID (auto-detected from SA email if omitted)")
 	saAddCmd.Flags().StringVar(&saDisplayName, "name", "", "Display name for the service account")
-	_ = saAddCmd.MarkFlagRequired("project")
 
 	saListCmd.Flags().BoolVar(&saOutputJSON, "json", false, "Output in JSON format")
 }

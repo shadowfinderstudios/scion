@@ -17,7 +17,6 @@ package hub
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -93,22 +92,24 @@ func (s *Server) createGCPServiceAccount(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if req.Email == "" || req.ProjectID == "" {
+	if req.Email == "" {
 		slog.Debug("GCP SA create: missing required fields",
 			"grove_id", groveID,
-			"has_email", req.Email != "",
-			"has_project_id", req.ProjectID != "",
 		)
-		missing := []string{}
-		if req.Email == "" {
-			missing = append(missing, "email")
-		}
-		if req.ProjectID == "" {
-			missing = append(missing, "project_id")
-		}
 		writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
-			fmt.Sprintf("missing required field(s): %s", strings.Join(missing, ", ")), nil)
+			"missing required field(s): email", nil)
 		return
+	}
+
+	// If project_id is not provided, attempt to extract it from the SA email.
+	// GCP SA emails follow the pattern: <name>@<project>.iam.gserviceaccount.com
+	if req.ProjectID == "" {
+		if parts := strings.SplitN(req.Email, "@", 2); len(parts) == 2 {
+			domain := parts[1]
+			if strings.HasSuffix(domain, ".iam.gserviceaccount.com") {
+				req.ProjectID = strings.TrimSuffix(domain, ".iam.gserviceaccount.com")
+			}
+		}
 	}
 
 	// Verify grove exists
