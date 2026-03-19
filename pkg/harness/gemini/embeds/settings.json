@@ -143,5 +143,8 @@
         ]
       }
     ]
+  },
+  "experimental": {
+    "modelSteering": true
   }
 }
