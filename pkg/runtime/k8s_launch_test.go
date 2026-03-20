@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // --- Stage 3: Enhanced error messages ---
@@ -152,5 +153,98 @@ func TestBuildPod_FullConfig_Stage3(t *testing.T) {
 	}
 	if _, ok := res.Limits["nvidia.com/gpu"]; !ok {
 		t.Error("expected GPU limit")
+	}
+}
+
+func TestBuildPod_DefaultResources_WhenNoneSpecified(t *testing.T) {
+	rt, _, _ := newTestK8sRuntime()
+
+	config := RunConfig{
+		Name:         "no-resources",
+		Image:        "test:latest",
+		UnixUsername: "scion",
+	}
+
+	pod, err := rt.buildPod("default", config)
+	if err != nil {
+		t.Fatalf("buildPod failed: %v", err)
+	}
+
+	res := pod.Spec.Containers[0].Resources
+
+	// Should have default CPU request
+	cpuReq, ok := res.Requests[corev1.ResourceCPU]
+	if !ok {
+		t.Fatal("expected default CPU request to be set")
+	}
+	if cpuReq.String() != "250m" {
+		t.Errorf("expected CPU request '250m', got %q", cpuReq.String())
+	}
+
+	// Should have default memory request
+	memReq, ok := res.Requests[corev1.ResourceMemory]
+	if !ok {
+		t.Fatal("expected default memory request to be set")
+	}
+	if memReq.String() != "512Mi" {
+		t.Errorf("expected memory request '512Mi', got %q", memReq.String())
+	}
+
+	// Should have default CPU limit
+	cpuLim, ok := res.Limits[corev1.ResourceCPU]
+	if !ok {
+		t.Fatal("expected default CPU limit to be set")
+	}
+	if cpuLim.String() != "2" {
+		t.Errorf("expected CPU limit '2', got %q", cpuLim.String())
+	}
+
+	// Should have default memory limit
+	memLim, ok := res.Limits[corev1.ResourceMemory]
+	if !ok {
+		t.Fatal("expected default memory limit to be set")
+	}
+	if memLim.String() != "4Gi" {
+		t.Errorf("expected memory limit '4Gi', got %q", memLim.String())
+	}
+
+	// Should have default ephemeral storage
+	diskReq, ok := res.Requests[corev1.ResourceEphemeralStorage]
+	if !ok {
+		t.Fatal("expected default ephemeral storage request to be set")
+	}
+	if diskReq.String() != "10Gi" {
+		t.Errorf("expected ephemeral storage '10Gi', got %q", diskReq.String())
+	}
+}
+
+func TestBuildPod_ExplicitResources_OverrideDefaults(t *testing.T) {
+	rt, _, _ := newTestK8sRuntime()
+
+	config := RunConfig{
+		Name:         "custom-resources",
+		Image:        "test:latest",
+		UnixUsername: "scion",
+		Resources: &api.ResourceSpec{
+			Requests: api.ResourceList{CPU: "500m", Memory: "1Gi"},
+			Limits:   api.ResourceList{CPU: "4", Memory: "8Gi"},
+		},
+	}
+
+	pod, err := rt.buildPod("default", config)
+	if err != nil {
+		t.Fatalf("buildPod failed: %v", err)
+	}
+
+	res := pod.Spec.Containers[0].Resources
+
+	cpuReq := res.Requests[corev1.ResourceCPU]
+	if cpuReq.String() != "500m" {
+		t.Errorf("expected CPU request '500m', got %q", cpuReq.String())
+	}
+
+	memLim := res.Limits[corev1.ResourceMemory]
+	if memLim.String() != "8Gi" {
+		t.Errorf("expected memory limit '8Gi', got %q", memLim.String())
 	}
 }

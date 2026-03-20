@@ -954,6 +954,15 @@ func (r *KubernetesRuntime) buildPod(namespace string, config RunConfig) (*corev
 	}
 
 	// Apply resource requests/limits from the common resource spec with safe parsing.
+	// When no resources are specified, apply defaults so that GKE Autopilot
+	// (and other environments) get predictable scheduling behavior.
+	if config.Resources == nil {
+		config.Resources = &api.ResourceSpec{
+			Requests: api.ResourceList{CPU: "250m", Memory: "512Mi"},
+			Limits:   api.ResourceList{CPU: "2", Memory: "4Gi"},
+			Disk:     "10Gi",
+		}
+	}
 	if config.Resources != nil {
 		reqs := corev1.ResourceList{}
 		limits := corev1.ResourceList{}
@@ -1167,6 +1176,7 @@ func (r *KubernetesRuntime) waitForPodReady(ctx context.Context, namespace, podN
 	defer ticker.Stop()
 
 	lastStatus := ""
+	autopilotWaitLogged := false
 
 	fmt.Printf("Waiting for pod '%s' to be ready...\n", podName)
 	for {
@@ -1216,16 +1226,30 @@ func (r *KubernetesRuntime) waitForPodReady(ctx context.Context, namespace, podN
 					runtimeLog.Error("Container crash loop", "pod", podName, "message", message, "phase", "crash-loop")
 					return fmt.Errorf("container is crash-looping in pod %q: %s — check container logs with 'scion logs'", podName, message)
 				case "Unschedulable":
-					runtimeLog.Error("Pod unschedulable", "pod", podName, "message", message, "phase", "scheduling")
-					return fmt.Errorf("pod %q cannot be scheduled: %s — check node selectors, tolerations, and resource availability", podName, message)
+					if r.GKEMode {
+						runtimeLog.Info("Pod unschedulable (GKE Autopilot will auto-provision nodes)", "pod", podName, "message", message, "phase", "scheduling")
+					} else {
+						runtimeLog.Error("Pod unschedulable", "pod", podName, "message", message, "phase", "scheduling")
+						return fmt.Errorf("pod %q cannot be scheduled: %s — check node selectors, tolerations, and resource availability", podName, message)
+					}
 				}
 			}
 
 			// Check pod-level conditions for scheduling failures
 			for _, cond := range pod.Status.Conditions {
 				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse && cond.Reason == "Unschedulable" {
-					runtimeLog.Error("Pod unschedulable", "pod", podName, "message", cond.Message, "phase", "scheduling")
-					return fmt.Errorf("pod %q cannot be scheduled: %s — check node selectors, tolerations, and resource availability", podName, cond.Message)
+					if r.GKEMode {
+						// On GKE Autopilot, Unschedulable is transient — the cluster
+						// will auto-provision nodes. Continue waiting instead of failing.
+						if !autopilotWaitLogged {
+							runtimeLog.Info("Pod unschedulable (GKE Autopilot will auto-provision nodes)", "pod", podName, "message", cond.Message, "phase", "scheduling")
+							fmt.Printf("  Waiting for GKE Autopilot to provision node capacity...\n")
+							autopilotWaitLogged = true
+						}
+					} else {
+						runtimeLog.Error("Pod unschedulable", "pod", podName, "message", cond.Message, "phase", "scheduling")
+						return fmt.Errorf("pod %q cannot be scheduled: %s — check node selectors, tolerations, and resource availability", podName, cond.Message)
+					}
 				}
 			}
 
