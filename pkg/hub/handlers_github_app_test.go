@@ -254,6 +254,85 @@ func TestHandleGroveGitHubInstallation(t *testing.T) {
 	}
 }
 
+func TestHandleGroveGitHubStatus_PostNoInstallation(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	grove := &store.Grove{
+		ID: "grove_gh_status_check", Slug: "gh-status-check", Name: "GH Status Check",
+		GitRemote: "https://github.com/acme/widgets",
+		Created:   time.Now(), Updated: time.Now(), Visibility: "private",
+	}
+	if err := s.CreateGrove(ctx, grove); err != nil {
+		t.Fatalf("failed to create grove: %v", err)
+	}
+
+	// POST without installation should return 400
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groves/grove_gh_status_check/github-status", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for grove without installation, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleGroveGitHubStatus_PostWithInstallation(t *testing.T) {
+	srv, s := testServer(t)
+	ctx := context.Background()
+
+	grove := &store.Grove{
+		ID: "grove_gh_status_check2", Slug: "gh-status-check2", Name: "GH Status Check 2",
+		GitRemote: "https://github.com/acme/widgets",
+		Created:   time.Now(), Updated: time.Now(), Visibility: "private",
+	}
+	instID := int64(77777)
+	grove.GitHubInstallationID = &instID
+	grove.GitHubAppStatus = &store.GitHubAppGroveStatus{
+		State:       store.GitHubAppStateUnchecked,
+		LastChecked: time.Now(),
+	}
+	if err := s.CreateGrove(ctx, grove); err != nil {
+		t.Fatalf("failed to create grove: %v", err)
+	}
+
+	// Create the installation record
+	inst := &store.GitHubInstallation{
+		InstallationID: instID,
+		AccountLogin:   "acme",
+		AccountType:    "Organization",
+		AppID:          42,
+		Status:         store.GitHubInstallationStatusActive,
+	}
+	if err := s.CreateGitHubInstallation(ctx, inst); err != nil {
+		t.Fatalf("failed to create installation: %v", err)
+	}
+
+	// POST should succeed (though minting will fail because no GitHub App
+	// is configured — the endpoint should still return 200 with the error
+	// captured in the response and grove status updated to error)
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groves/grove_gh_status_check2/github-status", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Should have a check_error since GitHub App is not configured
+	if _, ok := resp["check_error"]; !ok {
+		t.Error("expected check_error in response since GitHub App is not configured")
+	}
+
+	// Grove status should now be updated (to error since minting failed)
+	statusMap, ok := resp["status"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected status object in response")
+	}
+	if statusMap["state"] != store.GitHubAppStateError {
+		t.Errorf("expected state=%s after failed check, got %v", store.GitHubAppStateError, statusMap["state"])
+	}
+}
+
 func TestHandleGroveGitHubInstallation_NotFoundInstallation(t *testing.T) {
 	srv, s := testServer(t)
 	ctx := context.Background()

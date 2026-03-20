@@ -522,13 +522,21 @@ func (s *Server) handleGroveGitHubInstallation(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// handleGroveGitHubStatus handles GET /api/v1/groves/{id}/github-status.
+// handleGroveGitHubStatus handles GET and POST /api/v1/groves/{id}/github-status.
+// GET returns the current status. POST actively verifies the installation by
+// checking with GitHub and attempting a token mint, then returns the updated status.
 func (s *Server) handleGroveGitHubStatus(w http.ResponseWriter, r *http.Request, groveID string) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetGroveGitHubStatus(w, r, groveID)
+	case http.MethodPost:
+		s.handleCheckGroveGitHubStatus(w, r, groveID)
+	default:
 		MethodNotAllowed(w)
-		return
 	}
+}
 
+func (s *Server) handleGetGroveGitHubStatus(w http.ResponseWriter, r *http.Request, groveID string) {
 	grove, err := s.store.GetGrove(r.Context(), groveID)
 	if err != nil {
 		if err == store.ErrNotFound {
@@ -543,6 +551,51 @@ func (s *Server) handleGroveGitHubStatus(w http.ResponseWriter, r *http.Request,
 		"grove_id":        groveID,
 		"installation_id": grove.GitHubInstallationID,
 		"status":          grove.GitHubAppStatus,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleCheckGroveGitHubStatus actively verifies the grove's GitHub App
+// installation by checking the installation on GitHub and attempting to mint
+// a token. The grove's status is updated to reflect the result.
+func (s *Server) handleCheckGroveGitHubStatus(w http.ResponseWriter, r *http.Request, groveID string) {
+	ctx := r.Context()
+
+	grove, err := s.store.GetGrove(ctx, groveID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, ErrCodeNotFound, "grove not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to get grove", nil)
+		return
+	}
+
+	if grove.GitHubInstallationID == nil {
+		writeError(w, http.StatusBadRequest, ErrCodeValidationError, "grove has no GitHub App installation", nil)
+		return
+	}
+
+	// Try minting a token — this validates the installation, permissions, and
+	// repo access in one shot, and updates the grove's status accordingly.
+	_, _, mintErr := s.mintGitHubAppToken(ctx, grove)
+
+	// Re-read the grove to get the updated status (mintGitHubAppToken updates it)
+	grove, err = s.store.GetGrove(ctx, groveID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to re-read grove after check", nil)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"grove_id":        groveID,
+		"installation_id": grove.GitHubInstallationID,
+		"status":          grove.GitHubAppStatus,
+		"permissions":     grove.GitHubPermissions,
+	}
+	if mintErr != nil {
+		resp["check_error"] = mintErr.Error()
 	}
 
 	writeJSON(w, http.StatusOK, resp)

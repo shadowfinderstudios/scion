@@ -1178,12 +1178,10 @@ export class ScionPageGroveSettings extends LitElement {
           </div>
 
           <div style="margin-top: 1rem; display: flex; align-items: center; gap: 0.5rem;">
-            ${status?.state === 'unchecked' ? html`
-              <sl-button variant="default" size="small" @click=${() => this.checkGitHubStatus()}>
-                <sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>
-                Check Status
-              </sl-button>
-            ` : ''}
+            <sl-button variant="default" size="small" ?loading=${this.githubAppLoading} ?disabled=${this.githubAppLoading} @click=${() => this.checkGitHubStatus()}>
+              <sl-icon slot="prefix" name="arrow-clockwise"></sl-icon>
+              ${status?.state === 'unchecked' ? 'Check Status' : 'Recheck Status'}
+            </sl-button>
             <a href=${`https://github.com/settings/installations/${this.githubAppInstallationId}`}
                target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
               <sl-button variant="text" size="small">
@@ -1214,13 +1212,28 @@ export class ScionPageGroveSettings extends LitElement {
     this.githubAppError = null;
     this.githubAppLoading = true;
     try {
-      // Trigger a discover to refresh installation state from GitHub
-      const res = await apiFetch('/api/v1/github-app/installations/discover', { method: 'POST' });
+      // Actively verify the installation by minting a test token
+      const res = await apiFetch(`/api/v1/groves/${this.groveId}/github-status`, { method: 'POST' });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { message?: string };
         throw new Error(data.message || `Check failed (${res.status})`);
       }
-      await this.refreshGitHubAppState();
+      const result = (await res.json()) as {
+        status?: GitHubAppGroveStatus;
+        permissions?: GitHubTokenPermissions;
+        installation_id?: number;
+      };
+      // Update local state from the check response
+      this.githubAppStatus = result.status ?? null;
+      this.githubAppPermissions = result.permissions ?? null;
+      this.githubAppInstallationId = result.installation_id ?? this.githubAppInstallationId;
+      if (this.grove) {
+        this.grove = {
+          ...this.grove,
+          githubAppStatus: result.status,
+          githubPermissions: result.permissions,
+        };
+      }
     } catch (err) {
       this.githubAppError = err instanceof Error ? err.message : 'Check failed';
     } finally {
