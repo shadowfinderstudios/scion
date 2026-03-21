@@ -97,19 +97,19 @@ func TestKubernetesRuntime_Run_Tmux(t *testing.T) {
 
 	// Assertions
 	// Check Command
-	// Expected: sh -c "tmux new-session -d -s scion -n agent ... \; new-window ... \; select-window ... \; attach-session ..."
+	// Expected: sciontool init -- sh -c "tmux new-session -d -s scion -n agent ... \; new-window ... \; select-window ... \; attach-session ..."
 	if len(pod.Spec.Containers) == 0 {
 		t.Fatal("Pod has no containers")
 	}
 	cmd := pod.Spec.Containers[0].Command
-	if len(cmd) < 3 {
+	if len(cmd) < 6 {
 		t.Fatalf("Command too short: %v", cmd)
 	}
-	if cmd[0] != "sh" || cmd[1] != "-c" {
-		t.Errorf("Expected command to start with sh -c, got %v", cmd)
+	if cmd[0] != "sciontool" || cmd[1] != "init" || cmd[2] != "--" || cmd[3] != "sh" || cmd[4] != "-c" {
+		t.Errorf("Expected command to start with 'sciontool init -- sh -c', got %v", cmd[:5])
 	}
 	// Check if the wrapped command contains tmux session setup and harness command
-	tmuxCmd := cmd[2]
+	tmuxCmd := cmd[5]
 	if !strings.Contains(tmuxCmd, "tmux new-session -d -s scion -n agent") {
 		t.Errorf("Expected tmux new-session with agent window, got: %s", tmuxCmd)
 	}

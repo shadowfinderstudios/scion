@@ -295,6 +295,13 @@ func (r *KubernetesRuntime) Run(ctx context.Context, config RunConfig) (string, 
 		if err != nil {
 			return createdPod.Name, fmt.Errorf("failed to sync home: %w", err)
 		}
+		// Fix ownership: tar extraction runs as root via K8s exec, so synced
+		// files are owned by root. chown them to the scion user so the
+		// privilege-dropped harness process can access its home directory.
+		chownCmd := fmt.Sprintf("chown -R %s:%s %s", config.UnixUsername, config.UnixUsername, destHome)
+		if _, err := r.execInPod(ctx, namespace, createdPod.Name, []string{"sh", "-c", chownCmd}); err != nil {
+			runtimeLog.Debug("Failed to chown home directory (non-fatal)", "error", err)
+		}
 	}
 
 	if config.Workspace != "" {
@@ -305,6 +312,11 @@ func (r *KubernetesRuntime) Run(ctx context.Context, config RunConfig) (string, 
 		})
 		if err != nil {
 			return createdPod.Name, fmt.Errorf("failed to sync workspace: %w", err)
+		}
+		// Fix workspace ownership for the scion user
+		chownCmd := fmt.Sprintf("chown -R %s:%s /workspace", config.UnixUsername, config.UnixUsername)
+		if _, err := r.execInPod(ctx, namespace, createdPod.Name, []string{"sh", "-c", chownCmd}); err != nil {
+			runtimeLog.Debug("Failed to chown workspace (non-fatal)", "error", err)
 		}
 	}
 
@@ -725,7 +737,13 @@ func (r *KubernetesRuntime) buildPod(namespace string, config RunConfig) (*corev
 		"tmux new-session -d -s scion -n agent %s \\; new-window -t scion -n shell \\; select-window -t scion:agent \\; attach-session -t scion",
 		cmdLine,
 	)
-	cmd = []string{"sh", "-c", tmuxCmd}
+	// Wrap with sciontool init so the container entrypoint runs:
+	// - UID/GID setup (scion user matches host user)
+	// - Privilege drop (child runs as scion, not root)
+	// - Zombie reaping, signal forwarding, heartbeat, telemetry
+	// Without this, the tmux session and harness run as root, and
+	// /home/scion is never used as $HOME.
+	cmd = []string{"sciontool", "init", "--", "sh", "-c", tmuxCmd}
 
 	// Env Resolution — match local runtimes by including harness env + telemetry env.
 	envVars := []corev1.EnvVar{}
@@ -1931,6 +1949,41 @@ func (r *KubernetesRuntime) Exec(ctx context.Context, id string, cmd []string) (
 		return stdout.String(), fmt.Errorf("exec failed: %w (stderr: %s)", err, stderr.String())
 	}
 
+	return stdout.String(), nil
+}
+
+// execInPod runs a command in the pod's "agent" container as root (the default
+// K8s exec user). This is used for administrative tasks like chown after syncing files.
+func (r *KubernetesRuntime) execInPod(ctx context.Context, namespace, podName string, cmd []string) (string, error) {
+	req := r.Client.Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec")
+
+	option := &corev1.PodExecOptions{
+		Container: "agent",
+		Command:   cmd,
+		Stdin:     false,
+		Stdout:    true,
+		Stderr:    true,
+		TTY:       false,
+	}
+	req.VersionedParams(option, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(r.Client.Config, "POST", req.URL())
+	if err != nil {
+		return "", err
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err != nil {
+		return stdout.String(), fmt.Errorf("exec failed: %w (stderr: %s)", err, stderr.String())
+	}
 	return stdout.String(), nil
 }
 
