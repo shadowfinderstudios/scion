@@ -1027,10 +1027,10 @@ export class ScionPageGroveSettings extends LitElement {
 
       if (agent.phase === 'stopped' || agent.phase === 'completed') {
         this.stopSyncPolling();
+        void this.cleanupSyncAgent();
+        await Promise.all([this.loadTemplates(), this.loadDropdownTemplates()]);
         this.syncLoading = false;
         this.syncSuccess = 'Templates synced successfully.';
-        void this.cleanupSyncAgent();
-        void this.loadTemplates();
       } else if (agent.phase === 'error') {
         this.stopSyncPolling();
         this.syncLoading = false;
