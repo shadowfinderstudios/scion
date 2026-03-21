@@ -274,6 +274,96 @@ func TestLookupAgent_FallsBackToContainerID(t *testing.T) {
 	}
 }
 
+func TestResolveManagerForAgent_DefaultManager(t *testing.T) {
+	mgr := &filteringMockManager{}
+	mgr.agents = []api.AgentInfo{
+		{
+			Name:   "myagent",
+			Labels: map[string]string{"scion.name": "myagent"},
+		},
+	}
+	rt := &runtime.MockRuntime{NameFunc: func() string { return "docker" }}
+	srv := New(DefaultServerConfig(), mgr, rt)
+
+	result := srv.resolveManagerForAgent(context.Background(), "myagent")
+	if result != mgr {
+		t.Error("expected default manager to be returned")
+	}
+}
+
+func TestResolveManagerForAgent_FallbackToAuxiliary(t *testing.T) {
+	// Default manager has no agents
+	defaultMgr := &filteringMockManager{}
+	defaultMgr.agents = []api.AgentInfo{}
+
+	// Auxiliary manager (kubernetes) has the agent
+	auxMgr := &filteringMockManager{}
+	auxMgr.agents = []api.AgentInfo{
+		{
+			Name:   "k8sagent",
+			Labels: map[string]string{"scion.name": "k8sagent"},
+		},
+	}
+
+	rt := &runtime.MockRuntime{NameFunc: func() string { return "docker" }}
+	auxRt := &runtime.MockRuntime{NameFunc: func() string { return "kubernetes" }}
+	srv := New(DefaultServerConfig(), defaultMgr, rt)
+
+	srv.auxiliaryRuntimesMu.Lock()
+	srv.auxiliaryRuntimes["kubernetes"] = auxiliaryRuntime{
+		Runtime: auxRt,
+		Manager: auxMgr,
+	}
+	srv.auxiliaryRuntimesMu.Unlock()
+
+	result := srv.resolveManagerForAgent(context.Background(), "k8sagent")
+	if result != auxMgr {
+		t.Error("expected auxiliary manager to be returned for k8s agent")
+	}
+}
+
+func TestResolveManagerForAgent_NotFoundFallsBackToDefault(t *testing.T) {
+	defaultMgr := &filteringMockManager{}
+	defaultMgr.agents = []api.AgentInfo{}
+
+	rt := &runtime.MockRuntime{NameFunc: func() string { return "docker" }}
+	srv := New(DefaultServerConfig(), defaultMgr, rt)
+
+	result := srv.resolveManagerForAgent(context.Background(), "nonexistent")
+	if result != defaultMgr {
+		t.Error("expected default manager when agent not found anywhere")
+	}
+}
+
+func TestResolveManagerForAgent_CaseInsensitive(t *testing.T) {
+	auxMgr := &filteringMockManager{}
+	auxMgr.agents = []api.AgentInfo{
+		{
+			Name:   "myagent",
+			Labels: map[string]string{"scion.name": "myagent"},
+		},
+	}
+
+	defaultMgr := &filteringMockManager{}
+	defaultMgr.agents = []api.AgentInfo{}
+
+	rt := &runtime.MockRuntime{NameFunc: func() string { return "docker" }}
+	auxRt := &runtime.MockRuntime{NameFunc: func() string { return "kubernetes" }}
+	srv := New(DefaultServerConfig(), defaultMgr, rt)
+
+	srv.auxiliaryRuntimesMu.Lock()
+	srv.auxiliaryRuntimes["kubernetes"] = auxiliaryRuntime{
+		Runtime: auxRt,
+		Manager: auxMgr,
+	}
+	srv.auxiliaryRuntimesMu.Unlock()
+
+	result := srv.resolveManagerForAgent(context.Background(), "MyAgent")
+	if result != auxMgr {
+		t.Error("expected auxiliary manager to be returned for case-insensitive lookup")
+	}
+}
+
 func TestRuntimeCommand_ReturnsRuntimeName(t *testing.T) {
 	rt := &runtime.MockRuntime{NameFunc: func() string { return "podman" }}
 	srv := New(DefaultServerConfig(), &mockManager{}, rt)

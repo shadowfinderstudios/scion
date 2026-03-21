@@ -713,8 +713,10 @@ func (s *Server) handleAgentByID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAgent(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
 
-	// List agents and find the matching one
-	agents, err := s.manager.List(ctx, map[string]string{"scion.agent": "true"})
+	// Resolve the correct manager (checks auxiliary runtimes if needed)
+	mgr := s.resolveManagerForAgent(ctx, id)
+
+	agents, err := mgr.List(ctx, map[string]string{"scion.agent": "true"})
 	if err != nil {
 		RuntimeError(w, "Failed to list agents: "+err.Error())
 		return
@@ -738,9 +740,12 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, id string) 
 	removeBranch := query.Get("removeBranch") == "true"
 	softDelete := query.Get("softDelete") == "true"
 
+	// Resolve the correct manager for this agent (may be on an auxiliary runtime)
+	mgr := s.resolveManagerForAgent(ctx, id)
+
 	// Get the agent's grove path before stopping (needed for file deletion)
 	var grovePath string
-	agents, err := s.manager.List(ctx, map[string]string{"scion.agent": "true"})
+	agents, err := mgr.List(ctx, map[string]string{"scion.agent": "true"})
 	if err == nil {
 		for _, a := range agents {
 			if a.Name == id || a.ContainerID == id || a.Slug == id {
@@ -778,7 +783,7 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 
-	_, err = s.manager.Delete(ctx, id, deleteFiles, grovePath, removeBranch)
+	_, err = mgr.Delete(ctx, id, deleteFiles, grovePath, removeBranch)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			NotFound(w, "Agent")
@@ -973,7 +978,8 @@ func isContainerStopTolerable(err error) bool {
 func (s *Server) stopAgent(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
 
-	if err := s.manager.Stop(ctx, id); err != nil {
+	mgr := s.resolveManagerForAgent(ctx, id)
+	if err := mgr.Stop(ctx, id); err != nil {
 		if isContainerStopTolerable(err) {
 			// Container doesn't exist, is already stopped, or podman/docker can't find it.
 			// Treat as success so the hub can update its state.
@@ -1026,7 +1032,9 @@ func (s *Server) restartAgent(w http.ResponseWriter, r *http.Request, id string)
 
 	// Stop then start — tolerate stop errors since the container may already
 	// be exited and the subsequent start will handle cleanup.
-	if err := s.manager.Stop(ctx, id); err != nil {
+	// Use resolveManagerForAgent to find the agent on auxiliary runtimes.
+	stopMgr := s.resolveManagerForAgent(ctx, id)
+	if err := stopMgr.Stop(ctx, id); err != nil {
 		if isContainerStopTolerable(err) {
 			s.agentLifecycleLog.Warn("Restart: stop target not found or already stopped, proceeding with start", "agent_id", id, "error", err)
 		} else {
@@ -1698,6 +1706,41 @@ func (s *Server) finalizeEnv(w http.ResponseWriter, r *http.Request, id string) 
 	}
 
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// resolveManagerForAgent returns the appropriate agent.Manager for an existing
+// agent by checking the default runtime first, then falling back to auxiliary
+// runtimes. This ensures stop/delete/restart operations target the correct
+// runtime when agents are launched on non-default runtimes (e.g. K8s pods
+// when the broker's default is Docker).
+func (s *Server) resolveManagerForAgent(ctx context.Context, id string) agent.Manager {
+	slug := strings.ToLower(id)
+	filter := map[string]string{"scion.name": slug}
+
+	// Try the default manager first
+	agents, err := s.manager.List(ctx, filter)
+	if err == nil && len(agents) > 0 {
+		return s.manager
+	}
+
+	// Fall back to auxiliary runtimes
+	s.auxiliaryRuntimesMu.RLock()
+	auxRuntimes := make(map[string]auxiliaryRuntime, len(s.auxiliaryRuntimes))
+	for k, v := range s.auxiliaryRuntimes {
+		auxRuntimes[k] = v
+	}
+	s.auxiliaryRuntimesMu.RUnlock()
+
+	for _, aux := range auxRuntimes {
+		auxAgents, auxErr := aux.Manager.List(ctx, filter)
+		if auxErr == nil && len(auxAgents) > 0 {
+			return aux.Manager
+		}
+	}
+
+	// Default fallback — the agent may have already been removed or the
+	// runtime is genuinely the default one (e.g. pod already deleted).
+	return s.manager
 }
 
 // resolveManagerForOpts returns the appropriate agent.Manager for the given

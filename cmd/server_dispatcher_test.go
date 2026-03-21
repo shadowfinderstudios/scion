@@ -69,6 +69,8 @@ func (m *mockAgentManager) Watch(ctx context.Context, agentID string) (<-chan ap
 	return nil, nil
 }
 
+func (m *mockAgentManager) Close() {}
+
 func TestDispatchAgentStart(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
