@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Visualizer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: rgba(22, 27, 34, 0.95);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      height: 40px;
+      z-index: 20;
+      position: relative;
+    }
+
+    #grove-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #58a6ff;
+    }
+
+    #info-display {
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+    }
+
+    #graph-container {
+      position: relative;
+      width: 100%;
+      height: calc(100vh - 100px);
+      overflow: hidden;
+    }
+
+    #graph-container canvas {
+      display: block;
+    }
+
+    #controls-container {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(22, 27, 34, 0.95);
+      border-top: 1px solid rgba(255,255,255,0.1);
+      z-index: 20;
+    }
+
+    .transport-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      height: 48px;
+    }
+
+    .transport-controls {
+      display: flex;
+      gap: 4px;
+    }
+
+    .transport-btn {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #c9d1d9;
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.15s;
+    }
+
+    .transport-btn:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    .scrubber-container {
+      flex: 1;
+    }
+
+    .scrubber {
+      width: 100%;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255,255,255,0.15);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .scrubber::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #58a6ff;
+      cursor: pointer;
+    }
+
+    .scrubber::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #58a6ff;
+      border: none;
+      cursor: pointer;
+    }
+
+    .speed-container select {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #c9d1d9;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .time-display {
+      font-size: 12px;
+      color: rgba(255,255,255,0.6);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .filter-panel {
+      display: flex;
+      gap: 24px;
+      padding: 12px 16px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      background: rgba(22, 27, 34, 0.98);
+    }
+
+    .filter-section h4 {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .filter-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+
+    .filter-item input[type="checkbox"] {
+      accent-color: #58a6ff;
+    }
+
+    .agent-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .agent-filters,
+    .event-filters {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <span id="grove-title">Agent Visualizer</span>
+    <span id="info-display"></span>
+  </div>
+  <div id="graph-container"></div>
+  <div id="controls-container"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
