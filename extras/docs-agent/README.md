@@ -32,9 +32,10 @@ open http://localhost:8080/chat
 Environment variables:
 - `PORT` - Listen port (default: `8080`)
 - `GEMINI_API_KEY` - Gemini API key (required)
-- `GEMINI_SYSTEM_MD` - Path to system prompt (default: `/etc/docs-agent/system-prompt.md`)
+- `GEMINI_SYSTEM_MD` - Path to system prompt (default: `$DOCS_AGENT_REPO_DIR/extras/docs-agent/system-prompt.md`)
 - `DOCS_AGENT_TIMEOUT` - Query timeout in seconds (default: `60`)
-- `DOCS_AGENT_SANDBOX_DIR` - Path to Scion source checkout (default: `/workspace/scion`)
+- `DOCS_AGENT_WORKSPACE` - Workspace root directory (default: `/workspace`)
+- `DOCS_AGENT_REPO_DIR` - Path to Scion source checkout (default: `$DOCS_AGENT_WORKSPACE/scion`)
 - `DOCS_AGENT_MODEL` - Gemini model to use (default: `gemini-3.1-flash-lite-preview`)
 
 ## Testing

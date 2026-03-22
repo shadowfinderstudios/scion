@@ -42,8 +42,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 COPY --from=builder /docs-agent /usr/local/bin/docs-agent
 COPY --from=builder /scion-source /workspace/scion
 
-# Copy the system prompt
-COPY system-prompt.md /etc/docs-agent/system-prompt.md
-
 EXPOSE 8080
 CMD ["docs-agent"]

@@ -37,17 +37,67 @@ const (
 	defaultPort       = "8080"
 	defaultTimeout    = 60 * time.Second
 	maxQueryLength    = 1000
-	defaultSandboxDir = "/workspace/scion"
-	defaultSystemMD   = "/etc/docs-agent/system-prompt.md"
+	defaultWorkspace = "/workspace"
+	defaultRepoDir   = "scion"
+	defaultSystemMD   = "extras/docs-agent/system-prompt.md"
 	defaultModel      = "gemini-3.1-flash-lite-preview"
 )
 
 var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
-// runCommand executes a command and returns its combined stdout and stderr.
+// debugEnabled returns true when DEBUG=1 or DEBUG=true is set.
+func debugEnabled() bool {
+	v := os.Getenv("DEBUG")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+func debugf(format string, args ...any) {
+	if debugEnabled() {
+		log.Printf("[DEBUG] "+format, args...)
+	}
+}
+
+// geminiNoiseRegexp matches gemini CLI diagnostic lines that leak into stdout.
+var geminiNoiseRegexp = regexp.MustCompile(`(?m)^MCP issues detected\..*$\n?`)
+
+// cleanGeminiOutput strips ANSI escape codes and gemini CLI noise from output.
+func cleanGeminiOutput(s string) string {
+	s = ansiRegexp.ReplaceAllString(s, "")
+	s = geminiNoiseRegexp.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
+// shelljoin formats args as a copy-pasteable shell command fragment.
+// Args containing spaces or special characters are single-quoted.
+func shelljoin(args []string) string {
+	parts := make([]string, len(args))
+	for i, a := range args {
+		if strings.ContainsAny(a, " \t\n\"'\\$`!#&|;(){}[]<>?*~") {
+			parts[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
+		} else {
+			parts[i] = a
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// truncateTail returns the last maxLen bytes of s, prefixed with
+// "...[truncated] " if truncation occurred.
+func truncateTail(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return "...[truncated] " + s[len(s)-maxLen:]
+}
+
+// runCommand executes a command and returns its stdout.
+// dir sets the working directory; empty means current directory.
 // Override in tests to mock command execution.
-var runCommand = func(ctx context.Context, name string, args []string, env []string) (string, error) {
+var runCommand = func(ctx context.Context, name string, args []string, dir string, env []string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
@@ -85,18 +135,25 @@ func getTimeout() time.Duration {
 	return defaultTimeout
 }
 
-func getSandboxDir() string {
-	if v := os.Getenv("DOCS_AGENT_SANDBOX_DIR"); v != "" {
+func getWorkspace() string {
+	if v := os.Getenv("DOCS_AGENT_WORKSPACE"); v != "" {
 		return v
 	}
-	return defaultSandboxDir
+	return defaultWorkspace
+}
+
+func getRepoDir() string {
+	if v := os.Getenv("DOCS_AGENT_REPO_DIR"); v != "" {
+		return v
+	}
+	return getWorkspace() + "/" + defaultRepoDir
 }
 
 func getSystemMD() string {
 	if v := os.Getenv("GEMINI_SYSTEM_MD"); v != "" {
 		return v
 	}
-	return defaultSystemMD
+	return getRepoDir() + "/" + defaultSystemMD
 }
 
 func getModel() string {
@@ -151,26 +208,40 @@ func handleAsk(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), getTimeout())
 	defer cancel()
 
+	model := getModel()
+	repoDir := getRepoDir()
+	systemMD := getSystemMD()
+
 	args := []string{
 		"--prompt", query,
-		"--model", getModel(),
-		"--sandbox_dir", getSandboxDir(),
+		"--model", model,
 	}
 	env := []string{
-		"GEMINI_SYSTEM_MD=" + getSystemMD(),
+		"GEMINI_SYSTEM_MD=" + systemMD,
 	}
 
-	output, err := runCommand(ctx, "gemini", args, env)
+	debugf("ask: cd %s && GEMINI_SYSTEM_MD=%s gemini %s",
+		repoDir, systemMD, shelljoin(args))
+
+	output, err := runCommand(ctx, "gemini", args, repoDir, env)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
+			debugf("ask: request timed out after %s", getTimeout())
 			writeError(w, http.StatusGatewayTimeout, "request timed out")
 			return
 		}
+		// Extract stderr from exec.ExitError if available.
+		stderr := ""
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr = string(exitErr.Stderr)
+		}
+		debugf("ask: gemini command failed: err=%v stderr=%q stdout=%q", err, truncateTail(stderr, 2000), output)
 		writeError(w, http.StatusInternalServerError, "failed to get response from Gemini")
 		return
 	}
 
-	answer := ansiRegexp.ReplaceAllString(output, "")
+	debugf("ask: gemini responded with %d bytes", len(output))
+	answer := cleanGeminiOutput(output)
 	writeJSON(w, http.StatusOK, askResponse{Answer: answer})
 }
 
@@ -201,13 +272,16 @@ func handleRefresh(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	sandboxDir := getSandboxDir()
-	output, err := runCommand(ctx, "git", []string{"-C", sandboxDir, "pull", "--ff-only"}, nil)
+	repoDir := getRepoDir()
+	debugf("refresh: running git pull in %s", repoDir)
+	output, err := runCommand(ctx, "git", []string{"pull", "--ff-only"}, repoDir, nil)
 	if err != nil {
+		debugf("refresh: git pull failed: err=%v output=%q", err, output)
 		writeError(w, http.StatusInternalServerError, "git pull failed: "+output)
 		return
 	}
 
+	debugf("refresh: git pull succeeded: %s", strings.TrimSpace(output))
 	writeJSON(w, http.StatusOK, refreshResponse{Status: "ok", Output: strings.TrimSpace(output)})
 }
 
@@ -250,6 +324,14 @@ func main() {
 
 	handler := corsMiddleware(mux)
 
+	if debugEnabled() {
+		log.Printf("DEBUG mode enabled")
+		log.Printf("  workspace=%s", getWorkspace())
+		log.Printf("  repo_dir=%s", getRepoDir())
+		log.Printf("  model=%s", getModel())
+		log.Printf("  system_md=%s", getSystemMD())
+		log.Printf("  timeout=%s", getTimeout())
+	}
 	log.Printf("docs-agent listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("server error: %v", err)
