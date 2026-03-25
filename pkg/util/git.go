@@ -526,6 +526,73 @@ func ExtractOrgRepo(gitURL string) (org, repo string) {
 	return parts[len(parts)-2], parts[len(parts)-1]
 }
 
+// CloneSharedWorkspace clones a git repository into the specified workspace path
+// for use as a shared workspace grove. It configures git identity and optionally
+// uses a token for authentication.
+func CloneSharedWorkspace(workspacePath, cloneURL, branch, token string) error {
+	// Build the authenticated URL if a token is provided
+	authURL := cloneURL
+	if token != "" {
+		// Insert oauth2:token credentials into the HTTPS URL
+		// cloneURL is expected to be https://host/org/repo.git
+		authURL = strings.Replace(cloneURL, "https://", "https://oauth2:"+token+"@", 1)
+	}
+
+	// Build clone command
+	args := []string{"clone"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	args = append(args, authURL, workspacePath)
+
+	cmd := exec.Command("git", args...)
+	// Prevent git from prompting for credentials
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Sanitize output to avoid leaking tokens in error messages
+		sanitized := sanitizeGitOutput(string(output), token)
+		return fmt.Errorf("git clone failed: %s", strings.TrimSpace(sanitized))
+	}
+
+	// Configure git identity in the cloned workspace
+	if err := gitConfig(workspacePath, "user.name", "Scion"); err != nil {
+		return fmt.Errorf("failed to configure git user.name: %w", err)
+	}
+	if err := gitConfig(workspacePath, "user.email", "agent@scion.dev"); err != nil {
+		return fmt.Errorf("failed to configure git user.email: %w", err)
+	}
+
+	// Remove stored credentials from the clone's remote URL.
+	// The cloned repo stores the authenticated URL in .git/config — replace it
+	// with the bare (unauthenticated) URL so credentials aren't persisted on disk.
+	if token != "" {
+		if err := gitConfig(workspacePath, "remote.origin.url", cloneURL); err != nil {
+			Debugf("CloneSharedWorkspace: failed to sanitize remote URL: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// gitConfig sets a git config value in the specified repository.
+func gitConfig(repoPath, key, value string) error {
+	cmd := exec.Command("git", "-C", repoPath, "config", key, value)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %s", key, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// sanitizeGitOutput removes a token from git output to prevent credential leaks.
+func sanitizeGitOutput(output, token string) string {
+	if token == "" {
+		return output
+	}
+	return strings.ReplaceAll(output, token, "***")
+}
+
 // scionNamespace is a fixed UUID v5 namespace for deriving deterministic grove IDs.
 var scionNamespace = uuid.MustParse("a1b8e4f0-7c3d-4a1e-9f2b-6d5c8e7a0b1f")
 

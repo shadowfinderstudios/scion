@@ -2523,13 +2523,26 @@ func (s *Server) createGrove(w http.ResponseWriter, r *http.Request) {
 	// Create grove members group and policy (best-effort)
 	s.createGroveMembersGroupAndPolicy(ctx, grove)
 
-	// Initialize filesystem workspace for hub-native groves (no git remote)
-	// and shared-workspace git groves (git remote + shared mode).
-	if grove.GitRemote == "" || grove.IsSharedWorkspace() {
+	// Initialize filesystem workspace for hub-native groves and shared-workspace git groves.
+	if grove.IsSharedWorkspace() {
+		// Shared-workspace git grove: clone the repository into the workspace.
+		// Clone failure is a creation failure — clean up the grove record.
+		if err := s.cloneSharedWorkspaceGrove(ctx, grove); err != nil {
+			slog.Error("shared workspace clone failed, rolling back grove creation",
+				"grove_id", grove.ID, "slug", grove.Slug, "error", err)
+			if delErr := s.store.DeleteGrove(ctx, grove.ID); delErr != nil {
+				slog.Warn("failed to clean up grove record after clone failure",
+					"grove_id", grove.ID, "error", delErr)
+			}
+			writeError(w, http.StatusInternalServerError, "clone_failed",
+				"Failed to clone repository for shared workspace: "+err.Error(), nil)
+			return
+		}
+	} else if grove.GitRemote == "" {
+		// Hub-native grove (no git remote): create workspace directory.
 		if err := s.initHubNativeGrove(grove); err != nil {
 			slog.Warn("failed to initialize grove workspace",
-				"grove_id", grove.ID, "slug", grove.Slug,
-				"shared_workspace", grove.IsSharedWorkspace(), "error", err)
+				"grove_id", grove.ID, "slug", grove.Slug, "error", err)
 		}
 	}
 
@@ -2759,6 +2772,91 @@ func (s *Server) initHubNativeGrove(grove *store.Grove) error {
 	}
 
 	return nil
+}
+
+// cloneSharedWorkspaceGrove performs the host-side git clone for a shared-workspace
+// git grove. It clones the repository into the hub-native workspace path and
+// seeds the .scion project structure on top. If the clone fails, the workspace
+// directory is cleaned up and an error is returned.
+func (s *Server) cloneSharedWorkspaceGrove(ctx context.Context, grove *store.Grove) error {
+	workspacePath, err := hubNativeGrovePath(grove.Slug)
+	if err != nil {
+		return err
+	}
+
+	// Build clone URL from the grove's git remote.
+	// The clone-url label may be an explicit override (e.g. local path for testing).
+	// Only convert to HTTPS if the URL looks like a remote git URL.
+	cloneURL := grove.Labels["scion.dev/clone-url"]
+	if cloneURL == "" {
+		cloneURL = util.ToHTTPSCloneURL(grove.GitRemote)
+	} else if util.IsGitURL(cloneURL) {
+		cloneURL = util.ToHTTPSCloneURL(cloneURL)
+	}
+
+	defaultBranch := grove.Labels["scion.dev/default-branch"]
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+
+	// Resolve a token for authentication.
+	token := s.resolveCloneToken(ctx, grove)
+
+	// Perform the clone
+	if err := util.CloneSharedWorkspace(workspacePath, cloneURL, defaultBranch, token); err != nil {
+		// Clean up the workspace directory on failure — return to pre-creation state
+		os.RemoveAll(workspacePath)
+		return fmt.Errorf("shared workspace clone failed: %w", err)
+	}
+
+	// Seed the .scion project on top of the cloned workspace
+	scionDir := filepath.Join(workspacePath, ".scion")
+	if err := config.InitProject(scionDir, nil, config.InitProjectOpts{SkipRuntimeCheck: true}); err != nil {
+		slog.Warn("failed to initialize .scion in cloned workspace",
+			"grove_id", grove.ID, "error", err.Error())
+	}
+
+	// Write hub connection settings
+	settingsUpdates := map[string]string{
+		"hub.enabled":  "true",
+		"hub.endpoint": s.config.HubEndpoint,
+		"hub.groveId":  grove.ID,
+		"grove_id":     grove.ID,
+	}
+	for key, value := range settingsUpdates {
+		if err := config.UpdateSetting(scionDir, key, value, false); err != nil {
+			slog.Warn("failed to update shared-workspace grove setting",
+				"grove_id", grove.ID, "key", key, "error", err.Error())
+		}
+	}
+
+	return nil
+}
+
+// resolveCloneToken resolves a GitHub token for cloning a grove's repository.
+// It tries GitHub App installation tokens first, then falls back to grove secrets.
+func (s *Server) resolveCloneToken(ctx context.Context, grove *store.Grove) string {
+	// Try GitHub App token first
+	if grove.GitHubInstallationID != nil {
+		token, _, err := s.MintGitHubAppTokenForGrove(ctx, grove)
+		if err == nil && token != "" {
+			return token
+		}
+		if err != nil {
+			slog.Warn("failed to mint GitHub App token for clone, trying secrets",
+				"grove_id", grove.ID, "error", err.Error())
+		}
+	}
+
+	// Fall back to GITHUB_TOKEN from grove secrets
+	if s.secretBackend != nil {
+		sv, err := s.secretBackend.Get(ctx, "GITHUB_TOKEN", "grove", grove.ID)
+		if err == nil && sv != nil && sv.Value != "" {
+			return sv.Value
+		}
+	}
+
+	return ""
 }
 
 // syncWorkspaceOnStop triggers a best-effort workspace sync-back for hub-native groves

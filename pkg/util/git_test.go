@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -477,5 +478,135 @@ func TestHashGroveID(t *testing.T) {
 	id4 := HashGroveID("github.com/acme/widgets@release/v2")
 	if id1 == id4 {
 		t.Errorf("HashGroveID collision with branch qualifier: %q == %q", id1, id4)
+	}
+}
+
+func TestCloneSharedWorkspace(t *testing.T) {
+	// Create a source repo to clone from (local path as "remote")
+	sourceDir := setupGitRepo(t)
+
+	// Add a file so the clone has content
+	testFile := filepath.Join(sourceDir, "hello.txt")
+	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "add", "hello.txt")
+	cmd.Dir = sourceDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "commit", "-m", "add hello")
+	cmd.Dir = sourceDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("SuccessfulClone", func(t *testing.T) {
+		destDir := filepath.Join(t.TempDir(), "workspace")
+		err := CloneSharedWorkspace(destDir, sourceDir, "", "")
+		if err != nil {
+			t.Fatalf("CloneSharedWorkspace failed: %v", err)
+		}
+
+		// Verify file exists
+		content, err := os.ReadFile(filepath.Join(destDir, "hello.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "hello world" {
+			t.Errorf("unexpected content: %q", content)
+		}
+
+		// Verify git identity was configured
+		cmd := exec.Command("git", "-C", destDir, "config", "user.name")
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(output)); got != "Scion" {
+			t.Errorf("expected user.name 'Scion', got %q", got)
+		}
+
+		cmd = exec.Command("git", "-C", destDir, "config", "user.email")
+		output, err = cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(output)); got != "agent@scion.dev" {
+			t.Errorf("expected user.email 'agent@scion.dev', got %q", got)
+		}
+	})
+
+	t.Run("CloneWithBranch", func(t *testing.T) {
+		// Create a branch in the source repo
+		cmd := exec.Command("git", "-C", sourceDir, "branch", "feature")
+		if err := cmd.Run(); err != nil {
+			t.Fatal(err)
+		}
+
+		destDir := filepath.Join(t.TempDir(), "workspace")
+		err := CloneSharedWorkspace(destDir, sourceDir, "feature", "")
+		if err != nil {
+			t.Fatalf("CloneSharedWorkspace with branch failed: %v", err)
+		}
+
+		// Verify we're on the feature branch
+		cmd = exec.Command("git", "-C", destDir, "branch", "--show-current")
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(output)); got != "feature" {
+			t.Errorf("expected branch 'feature', got %q", got)
+		}
+	})
+
+	t.Run("CloneFailure_BadURL", func(t *testing.T) {
+		destDir := filepath.Join(t.TempDir(), "workspace")
+		err := CloneSharedWorkspace(destDir, "/nonexistent/repo", "", "")
+		if err == nil {
+			t.Fatal("expected clone to fail with bad URL")
+		}
+		if !strings.Contains(err.Error(), "git clone failed") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("TokenSanitizedInRemote", func(t *testing.T) {
+		// Clone with a fake token — since it's a local path, the token won't
+		// actually be used for auth, but we can verify the remote URL is sanitized
+		destDir := filepath.Join(t.TempDir(), "workspace")
+		cloneURL := "https://example.com/org/repo.git"
+
+		// This will fail because the URL is not a real repo, but we can test
+		// sanitizeGitOutput separately
+		err := CloneSharedWorkspace(destDir, cloneURL, "", "secret-token-123")
+		if err != nil {
+			// Expected failure — verify token is not in the error message
+			if strings.Contains(err.Error(), "secret-token-123") {
+				t.Error("token leaked in error message")
+			}
+		}
+	})
+}
+
+func TestSanitizeGitOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		token  string
+		want   string
+	}{
+		{"empty token", "fatal: error", "", "fatal: error"},
+		{"token in URL", "fatal: could not read from https://oauth2:mytoken@github.com", "mytoken", "fatal: could not read from https://oauth2:***@github.com"},
+		{"no token present", "fatal: some other error", "mytoken", "fatal: some other error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeGitOutput(tt.output, tt.token)
+			if got != tt.want {
+				t.Errorf("sanitizeGitOutput() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

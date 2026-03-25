@@ -22,7 +22,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/agent/state"
@@ -1701,10 +1703,27 @@ func TestGroveRegister_ExistingGrove_CreatesMembershipGroup(t *testing.T) {
 func TestCreateGrove_SharedWorkspace_SetsLabelAndInitFilesystem(t *testing.T) {
 	srv, _ := testServer(t)
 
+	// Create a local git repo to serve as the clone source
+	sourceDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = sourceDir
+		require.NoError(t, cmd.Run(), "git %v", args)
+	}
+
 	body := CreateGroveRequest{
 		Name:          "Shared WS Grove",
 		GitRemote:     "github.com/test/shared-ws",
 		WorkspaceMode: "shared",
+		Labels: map[string]string{
+			"scion.dev/clone-url":      sourceDir,
+			"scion.dev/default-branch": "master",
+		},
 	}
 
 	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groves", body)
@@ -1718,18 +1737,17 @@ func TestCreateGrove_SharedWorkspace_SetsLabelAndInitFilesystem(t *testing.T) {
 		"shared workspace label should be set")
 	assert.True(t, grove.IsSharedWorkspace(), "grove should report as shared workspace")
 
-	// Verify filesystem was initialized (like hub-native groves)
+	// Verify workspace was cloned (it's a git repo)
 	workspacePath, err := hubNativeGrovePath(grove.Slug)
 	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(workspacePath) })
 
+	assert.True(t, util.IsGitRepoDir(workspacePath), "workspace should be a git repo")
+
+	// Verify .scion directory was seeded
 	scionDir := filepath.Join(workspacePath, ".scion")
-	settingsPath := filepath.Join(scionDir, "settings.yaml")
-	_, err = os.Stat(settingsPath)
-	assert.NoError(t, err, "settings.yaml should exist for shared-workspace grove")
-
-	t.Cleanup(func() {
-		os.RemoveAll(workspacePath)
-	})
+	_, err = os.Stat(scionDir)
+	assert.NoError(t, err, ".scion directory should exist for shared-workspace grove")
 }
 
 func TestCreateGrove_PerAgentGit_NoWorkspaceLabel(t *testing.T) {
@@ -1777,4 +1795,111 @@ func TestPopulateAgentConfig_SharedWorkspace_SetsWorkspaceNotClone(t *testing.T)
 		"Workspace should be set for shared-workspace git groves")
 	assert.Nil(t, agent.AppliedConfig.GitClone,
 		"GitClone should NOT be set for shared-workspace git groves")
+}
+
+func TestCloneSharedWorkspaceGrove_Success(t *testing.T) {
+	srv, _ := testServer(t)
+
+	// Create a local git repo to serve as the "remote"
+	sourceDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = sourceDir
+		require.NoError(t, cmd.Run(), "git %v", args)
+	}
+
+	grove := &store.Grove{
+		ID:        "grove-clone-test",
+		Name:      "Clone Test",
+		Slug:      "clone-test-" + api.NewUUID()[:8],
+		GitRemote: "local/test/repo",
+		Labels: map[string]string{
+			store.LabelWorkspaceMode:   store.WorkspaceModeShared,
+			"scion.dev/clone-url":      sourceDir,
+			"scion.dev/default-branch": "master",
+		},
+	}
+
+	err := srv.cloneSharedWorkspaceGrove(context.Background(), grove)
+	require.NoError(t, err)
+
+	// Verify the workspace was created with a git repo
+	workspacePath, err := hubNativeGrovePath(grove.Slug)
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(workspacePath) })
+
+	assert.True(t, util.IsGitRepoDir(workspacePath), "workspace should be a git repo")
+
+	// Verify .scion directory was created
+	scionDir := filepath.Join(workspacePath, ".scion")
+	_, err = os.Stat(scionDir)
+	assert.NoError(t, err, ".scion directory should exist in cloned workspace")
+
+	// Verify git identity
+	cmd := exec.Command("git", "-C", workspacePath, "config", "user.name")
+	output, err := cmd.Output()
+	require.NoError(t, err)
+	assert.Equal(t, "Scion", strings.TrimSpace(string(output)))
+}
+
+func TestCloneSharedWorkspaceGrove_Failure_CleansUp(t *testing.T) {
+	srv, _ := testServer(t)
+
+	grove := &store.Grove{
+		ID:        "grove-clone-fail",
+		Name:      "Clone Fail",
+		Slug:      "clone-fail-" + api.NewUUID()[:8],
+		GitRemote: "github.com/nonexistent/repo",
+		Labels: map[string]string{
+			store.LabelWorkspaceMode: store.WorkspaceModeShared,
+		},
+	}
+
+	err := srv.cloneSharedWorkspaceGrove(context.Background(), grove)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shared workspace clone failed")
+
+	// Verify the workspace directory was cleaned up
+	workspacePath, pathErr := hubNativeGrovePath(grove.Slug)
+	require.NoError(t, pathErr)
+	_, statErr := os.Stat(workspacePath)
+	assert.True(t, os.IsNotExist(statErr), "workspace directory should be cleaned up on clone failure")
+}
+
+func TestCreateGrove_SharedWorkspace_CloneFailure_RollsBackGrove(t *testing.T) {
+	srv, st := testServer(t)
+
+	body := CreateGroveRequest{
+		Name:          "Clone Fail Grove",
+		GitRemote:     "github.com/nonexistent/repo-that-does-not-exist",
+		WorkspaceMode: "shared",
+	}
+
+	rec := doRequest(t, srv, http.MethodPost, "/api/v1/groves", body)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code,
+		"shared workspace grove creation should fail when clone fails: %s", rec.Body.String())
+
+	// Verify no grove record was left behind
+	result, err := st.ListGroves(context.Background(), store.GroveFilter{
+		Name: "Clone Fail Grove",
+	}, store.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, result.Items, "grove record should be rolled back on clone failure")
+}
+
+func TestResolveCloneToken_NoCredentials(t *testing.T) {
+	srv, _ := testServer(t)
+
+	grove := &store.Grove{
+		ID:        "grove-no-creds",
+		GitRemote: "github.com/test/repo",
+	}
+
+	token := srv.resolveCloneToken(context.Background(), grove)
+	assert.Empty(t, token, "should return empty when no credentials available")
 }
