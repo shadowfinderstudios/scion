@@ -604,6 +604,65 @@ func TestIsClaude(t *testing.T) {
 	}
 }
 
+func TestWriteEnvFile(t *testing.T) {
+	tmpHome := t.TempDir()
+
+	// Set some SCION_ env vars and a non-SCION var
+	t.Setenv("SCION_AGENT_NAME", "test-agent")
+	t.Setenv("SCION_AUTH_TOKEN", "secret-token-123")
+	t.Setenv("SCION_HARNESS", "gemini")
+	t.Setenv("NOT_SCION_VAR", "should-not-appear")
+
+	writeEnvFile(tmpHome, 0, 0)
+
+	envPath := filepath.Join(tmpHome, ".scion", "scion-env")
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("failed to read scion-env file: %v", err)
+	}
+
+	content := string(data)
+
+	// Should contain SCION_ vars
+	if !strings.Contains(content, `export SCION_AGENT_NAME="test-agent"`) {
+		t.Errorf("expected SCION_AGENT_NAME in env file, got:\n%s", content)
+	}
+	if !strings.Contains(content, `export SCION_AUTH_TOKEN="secret-token-123"`) {
+		t.Errorf("expected SCION_AUTH_TOKEN in env file, got:\n%s", content)
+	}
+	if !strings.Contains(content, `export SCION_HARNESS="gemini"`) {
+		t.Errorf("expected SCION_HARNESS in env file, got:\n%s", content)
+	}
+
+	// Should NOT contain non-SCION vars
+	if strings.Contains(content, "NOT_SCION_VAR") {
+		t.Errorf("unexpected NOT_SCION_VAR in env file")
+	}
+
+	// Should contain the header comment
+	if !strings.Contains(content, "Auto-generated") {
+		t.Errorf("expected header comment in env file")
+	}
+}
+
+func TestWriteEnvFile_IncludesGitHubToken(t *testing.T) {
+	tmpHome := t.TempDir()
+
+	t.Setenv("GITHUB_TOKEN", "ghp_test123")
+
+	writeEnvFile(tmpHome, 0, 0)
+
+	envPath := filepath.Join(tmpHome, ".scion", "scion-env")
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("failed to read scion-env file: %v", err)
+	}
+
+	if !strings.Contains(string(data), `export GITHUB_TOKEN="ghp_test123"`) {
+		t.Errorf("expected GITHUB_TOKEN in env file, got:\n%s", string(data))
+	}
+}
+
 func TestGitCloneWorkspace_DefaultEnvValues(t *testing.T) {
 	// Set SCION_GIT_CLONE_URL to trigger the clone path, but use a URL
 	// that will cause a predictable early failure (non-existent host).
