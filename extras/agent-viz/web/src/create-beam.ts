@@ -29,9 +29,9 @@ export class CreateBeamRenderer {
     requestedByName: string,
     newAgentInfo: AgentInfo,
     agentRing: AgentRing
-  ): void {
+  ): boolean {
     const fromPos = agentRing.getAgentPosition(requestedByName);
-    if (!fromPos) return;
+    if (!fromPos) return false;
 
     // Freeze ring so positions stay fixed during beam travel
     agentRing.freezeRebalance();
@@ -48,6 +48,8 @@ export class CreateBeamRenderer {
       targetPos: { ...targetPos },
       agentAdded: false,
     });
+
+    return true;
   }
 
   reset(): void {

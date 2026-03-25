@@ -630,6 +630,85 @@ func TestParseLogFileWithFSLog(t *testing.T) {
 	}
 }
 
+func TestNoDuplicateAgentsFromSlugMessages(t *testing.T) {
+	// When messages reference agents by slug name without a UUID, the parser
+	// should resolve them to existing UUID-based agents, not create duplicates.
+	entries := []GCPLogEntry{
+		// Server creates agent with UUID
+		{
+			InsertID:  "1",
+			Timestamp: "2026-03-22T16:30:00.000Z",
+			LogName:   "projects/test/logs/scion-server",
+			JSONPayload: map[string]any{
+				"message":  "Agent created",
+				"agent_id": "aaaa-bbbb-cccc",
+				"slug":     "runner",
+			},
+		},
+		// Agent lifecycle (has UUID)
+		{
+			InsertID:  "2",
+			Timestamp: "2026-03-22T16:30:01.000Z",
+			LogName:   "projects/test/logs/scion-agents",
+			Labels:    map[string]string{"agent_id": "aaaa-bbbb-cccc", "scion.harness": "gemini"},
+			JSONPayload: map[string]any{
+				"message": "agent.lifecycle.pre_start",
+			},
+		},
+		// Message sent by "agent:runner" WITHOUT a sender UUID
+		{
+			InsertID:  "3",
+			Timestamp: "2026-03-22T16:31:00.000Z",
+			LogName:   "projects/test/logs/scion-messages",
+			Labels: map[string]string{
+				"recipient":    "agent:runner",
+				"recipient_id": "aaaa-bbbb-cccc",
+			},
+			JSONPayload: map[string]any{
+				"sender":    "agent:runner",
+				"recipient": "agent:runner",
+				// Note: no sender_id — this is the scenario that caused duplicates
+				"recipient_id":    "aaaa-bbbb-cccc",
+				"msg_type":        "broadcast",
+				"message_content": "hello",
+				"message":         "message dispatched",
+			},
+		},
+	}
+
+	agents := extractAgents(entries)
+
+	// Should have exactly 1 agent, not 2
+	if len(agents) != 1 {
+		t.Errorf("expected 1 agent, got %d:", len(agents))
+		for _, a := range agents {
+			t.Logf("  %s (id=%s)", a.Name, a.ID)
+		}
+	}
+
+	// The agent should use the UUID, not the slug
+	if agents[0].ID != "aaaa-bbbb-cccc" {
+		t.Errorf("expected agent ID 'aaaa-bbbb-cccc', got %q", agents[0].ID)
+	}
+
+	// Events should not contain a bogus agent_create for the slug-based agent
+	events := extractEvents(entries, agents)
+	createCount := 0
+	for _, e := range events {
+		if e.Type == "agent_create" {
+			createCount++
+		}
+	}
+	if createCount != 1 {
+		t.Errorf("expected 1 agent_create event, got %d", createCount)
+		for _, e := range events {
+			if e.Type == "agent_create" {
+				t.Logf("  %s %+v", e.Timestamp, e.Data)
+			}
+		}
+	}
+}
+
 func TestPostStartSetsRunningPhase(t *testing.T) {
 	entries := []GCPLogEntry{
 		{

@@ -231,24 +231,29 @@ function handleEvent(evt: PlaybackEvent): void {
       const agentInfo = resolveAgentInfo(lifecycle);
 
       if (lifecycle.requestedBy) {
-        // Fire a create beam — the beam renderer will add the agent when it arrives
-        createBeamRenderer.addBeam(lifecycle.requestedBy, agentInfo, agentRing);
-        // Set initial state after a delay matching beam travel
-        setTimeout(() => {
-          agentRing.updateState({
-            agentId: lifecycle.agentId,
-            phase: 'created',
-            activity: 'idle',
-          });
-        }, 900); // BEAM_CHARGE + BEAM_TRAVEL duration
-      } else {
-        agentRing.addAgent(agentInfo);
-        agentRing.updateState({
-          agentId: lifecycle.agentId,
-          phase: 'created',
-          activity: 'idle',
-        });
+        // Fire a create beam — the beam renderer will add the agent when it arrives.
+        // If the requesting agent isn't on the ring (already removed, not yet created),
+        // addBeam returns false and we fall back to adding the agent directly.
+        const beamFired = createBeamRenderer.addBeam(lifecycle.requestedBy, agentInfo, agentRing);
+        if (beamFired) {
+          // Set initial state after a delay matching beam travel
+          setTimeout(() => {
+            agentRing.updateState({
+              agentId: lifecycle.agentId,
+              phase: 'created',
+              activity: 'idle',
+            });
+          }, 900); // BEAM_CHARGE + BEAM_TRAVEL duration
+          break;
+        }
+        // Beam couldn't fire — fall through to direct add
       }
+      agentRing.addAgent(agentInfo);
+      agentRing.updateState({
+        agentId: lifecycle.agentId,
+        phase: 'created',
+        activity: 'idle',
+      });
       break;
     }
     case 'agent_destroy': {

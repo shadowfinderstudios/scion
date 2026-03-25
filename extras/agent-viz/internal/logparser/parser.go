@@ -320,10 +320,10 @@ func extractAgents(entries []GCPLogEntry) []AgentInfo {
 					name := strings.TrimPrefix(val, "agent:")
 					if aid != "" {
 						nameMap[aid] = name
-					} else {
-						// No UUID available — use the slug name as both ID and name
-						nameMap[name] = name
 					}
+					// When no UUID is available, skip creating a slug-based entry;
+					// the agent should already be known by UUID from server or agent logs.
+					// Adding slug-as-ID entries creates duplicates.
 				}
 			}
 			// Also check agent_name / agent_id fields in message payloads
@@ -367,13 +367,23 @@ func extractAgents(entries []GCPLogEntry) []AgentInfo {
 
 	// Third pass: backfill agents discovered only from messages (no scion-agents entries).
 	// These are agents that existed before the log window or whose agent logs weren't captured.
+	// Build a set of known agent names to avoid creating duplicates with different IDs.
+	knownNames := make(map[string]bool)
+	for _, a := range agentMap {
+		knownNames[a.Name] = true
+	}
 	for id, name := range nameMap {
 		if _, exists := agentMap[id]; !exists {
+			// Skip if an agent with this name already exists under a different (UUID) ID
+			if knownNames[name] {
+				continue
+			}
 			agentMap[id] = &AgentInfo{
 				ID:      id,
 				Name:    name,
 				Harness: "unknown",
 			}
+			knownNames[name] = true
 		}
 	}
 
@@ -508,8 +518,12 @@ func extractEventsOpt(entries []GCPLogEntry, agents []AgentInfo, skipFileEvents 
 	var events []PlaybackEvent
 
 	agentNameByID := make(map[string]string)
+	agentIDByName := make(map[string]string) // reverse lookup: name -> first known UUID
 	for _, a := range agents {
 		agentNameByID[a.ID] = a.Name
+		if _, exists := agentIDByName[a.Name]; !exists {
+			agentIDByName[a.Name] = a.ID
+		}
 	}
 
 	// Track which agents had explicit lifecycle (pre_start) events
@@ -740,14 +754,23 @@ func extractEventsOpt(entries []GCPLogEntry, agents []AgentInfo, skipFileEvents 
 					senderID = e.Labels["sender_id"]
 				}
 				if senderID == "" && strings.HasPrefix(sender, "agent:") {
-					senderID = senderName
+					// Resolve slug name to known UUID; fall back to slug only if unknown
+					if uid, ok := agentIDByName[senderName]; ok {
+						senderID = uid
+					} else {
+						senderID = senderName
+					}
 				}
 				recipientID := getStr(jp, "recipient_id")
 				if recipientID == "" {
 					recipientID = e.Labels["recipient_id"]
 				}
 				if recipientID == "" && strings.HasPrefix(recipient, "agent:") {
-					recipientID = recipientName
+					if uid, ok := agentIDByName[recipientName]; ok {
+						recipientID = uid
+					} else {
+						recipientID = recipientName
+					}
 				}
 
 				if senderID != "" && strings.HasPrefix(sender, "agent:") {
