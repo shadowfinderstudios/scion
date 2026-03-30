@@ -137,7 +137,7 @@ scion start judge-1 "Evaluate the argument for renewable energy subsidies" --typ
 
 **Critical flags:**
 - `--non-interactive` is MANDATORY. Without it, the CLI may block waiting for user input and hang the orchestrator.
-- `--notify` is MANDATORY. Without it, the orchestrator will not receive notifications when agents complete or need help.
+- `--notify` should be used when available (Hub mode). It causes the orchestrator to receive a notification message when an agent completes or needs help. Note: `--notify` requires Hub mode — in local mode, omit it and poll with `scion list` / `scion look` instead.
 
 ### Monitoring Agents
 
@@ -157,7 +157,12 @@ scion message <agent-name> "<message>" --non-interactive
 
 # Send a message and interrupt the agent's current work
 scion message <agent-name> "<urgent instruction>" --interrupt --non-interactive
+
+# Check your inbox for messages from agents (Hub mode)
+scion messages
 ```
+
+In Hub mode, agents can also use `scion messages` to read their inbox — this is useful for workers that need to receive structured data or multi-step instructions from the orchestrator.
 
 ### Waiting for Agents
 
@@ -167,7 +172,9 @@ When the orchestrator starts workers and needs to wait for them, it MUST signal 
 sciontool status blocked "Waiting for agent <name> to complete"
 ```
 
-The orchestrator will receive a notification message when a worker completes or needs input (because of the `--notify` flag). It should then react accordingly — inspect the result, send follow-up instructions, or proceed with the workflow.
+**In Hub mode** (with `--notify`): The orchestrator will receive a notification message when a worker completes or needs input. It should then react accordingly — inspect the result, send follow-up instructions, or proceed with the workflow.
+
+**In local mode** (without `--notify`): The orchestrator should periodically poll with `scion list --non-interactive` to check agent statuses, and use `scion look <agent-name>` to inspect results when an agent reaches a terminal state.
 
 ### Orchestrator agents.md Template
 
@@ -189,6 +196,7 @@ You manage a team of specialized agents using the scion CLI.
 
 ### Starting Agents
 To start a worker: `scion start <name> "<task>" --type <template> --non-interactive --notify`
+(Note: `--notify` requires Hub mode. In local mode, omit it and poll with `scion list`.)
 
 Available templates:
 - `<template-1>`: [what this role does]
@@ -199,10 +207,12 @@ Available templates:
 - Inspect output: `scion look <agent-name>`
 - Send message: `scion message <agent-name> "<msg>" --non-interactive`
 - Interrupt: `scion message <agent-name> "<msg>" --interrupt --non-interactive`
+- Check inbox: `scion messages` (Hub mode)
 
 ### Waiting
 When waiting for agents, signal: `sciontool status blocked "Waiting for <name>"`
-You will be notified when they complete or need help.
+In Hub mode with `--notify`, you will be notified when agents complete or need help.
+In local mode, poll with `scion list --non-interactive` and `scion look <name>`.
 
 ## Workflow
 
@@ -437,7 +447,7 @@ For each round:
 
 - **Never omit the status boilerplate** from `agents.md`. Without it, the scion orchestration system cannot track agent state and the agent will appear stalled.
 - **Always use `--non-interactive`** on scion CLI commands. Without this flag, the CLI may prompt for user input and hang the agent indefinitely.
-- **Always use `--notify`** when starting agents. Without it, the orchestrator has no way to know when workers finish.
+- **Use `--notify` when in Hub mode** when starting agents. This enables push notifications when workers finish. In local mode, `--notify` is unavailable — the orchestrator must poll with `scion list` and `scion look` instead.
 - **Don't create `home/` directories** in custom templates. The default template provides all infrastructure files. Custom templates only need instruction and config files.
 - **Template names must match directory names**. The name in `scion-agent.yaml` `description` is cosmetic; the actual template name used in `--type` is the directory name.
 - **Workers communicate through the orchestrator**. Agents don't message each other directly — the orchestrator reads output from one and relays to others.
