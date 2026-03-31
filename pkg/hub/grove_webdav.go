@@ -16,6 +16,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,6 +44,11 @@ var syncExcludeExtensions = []string{
 // handleGroveWebDAV serves a WebDAV endpoint for grove workspace file sync.
 // It mounts at /api/v1/groves/{groveId}/dav/ and serves the grove's workspace
 // directory with file exclusion filters applied.
+//
+// For hub-native and shared-workspace groves, it serves the workspace directly.
+// For linked groves (workspace on a remote broker), it serves from the hub's
+// cached copy. The cache is populated via the cache/refresh or cache/notify
+// endpoints (Phase 3: Linked Grove Relay).
 func (s *Server) handleGroveWebDAV(w http.ResponseWriter, r *http.Request, groveID, davPath string) {
 	ctx := r.Context()
 
@@ -52,15 +58,10 @@ func (s *Server) handleGroveWebDAV(w http.ResponseWriter, r *http.Request, grove
 		return
 	}
 
-	// Only hub-native groves and shared-workspace git groves have a managed workspace
-	if grove.GitRemote != "" && !grove.IsSharedWorkspace() {
-		Conflict(w, "Workspace sync is only available for hub-native and shared-workspace groves")
-		return
-	}
-
-	workspacePath, err := hubNativeGrovePath(grove.Slug)
+	// Determine workspace path based on grove type
+	workspacePath, err := s.resolveGroveWebDAVPath(ctx, grove)
 	if err != nil {
-		InternalError(w)
+		Conflict(w, err.Error())
 		return
 	}
 
@@ -128,6 +129,60 @@ func (s *Server) updateGroveSyncState(groveID, workspacePath string) {
 	if err := s.store.UpsertGroveSyncState(context.Background(), state); err != nil {
 		slog.Warn("failed to update grove sync state", "grove_id", groveID, "error", err)
 	}
+}
+
+// resolveGroveWebDAVPath determines the filesystem path to serve via WebDAV
+// for a given grove. For hub-native and shared-workspace groves, this is the
+// hub-managed workspace directory. For linked groves (workspace on a remote
+// broker), this is the hub's cached copy of that workspace.
+func (s *Server) resolveGroveWebDAVPath(ctx context.Context, grove *store.Grove) (string, error) {
+	// Hub-native groves (no git remote) always have a managed workspace
+	if grove.GitRemote == "" {
+		path, err := hubNativeGrovePath(grove.Slug)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve grove path")
+		}
+		return path, nil
+	}
+
+	// Shared-workspace git groves have a managed workspace on the hub
+	if grove.IsSharedWorkspace() {
+		path, err := hubNativeGrovePath(grove.Slug)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve grove path")
+		}
+		return path, nil
+	}
+
+	// Linked groves: check if there's a co-located broker with a local path
+	providers, err := s.store.GetGroveProviders(ctx, grove.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve grove providers")
+	}
+
+	// Check for co-located (embedded) broker with a local path
+	for _, p := range providers {
+		if s.isEmbeddedBroker(p.BrokerID) && p.LocalPath != "" {
+			// Co-located broker: serve from local filesystem directly
+			return p.LocalPath, nil
+		}
+	}
+
+	// Remote linked grove: serve from the hub's cached copy.
+	// The cache is populated via cache/refresh or cache/notify endpoints.
+	cachePath, err := hubNativeGrovePath(grove.Slug)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve grove cache path")
+	}
+
+	// If cache doesn't exist yet, return the path anyway (MkdirAll will create it).
+	// The client should trigger a cache/refresh to populate it.
+	if !hasGroveCache(grove.Slug) {
+		slog.Debug("linked grove cache not yet populated",
+			"grove_id", grove.ID, "slug", grove.Slug)
+	}
+
+	return cachePath, nil
 }
 
 // walkFilteredDir walks a directory, calling fn for each non-excluded file.

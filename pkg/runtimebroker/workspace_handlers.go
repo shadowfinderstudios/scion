@@ -440,3 +440,136 @@ func (s *Server) countWorkspaceFiles(workspacePath string) (int, int64) {
 
 	return count, totalSize
 }
+
+// ============================================================================
+// Grove-Level Workspace Upload (Phase 3: Linked Grove Relay)
+// ============================================================================
+
+// GroveWorkspaceUploadRequest is the request body for uploading a grove's
+// workspace (not an individual agent's workspace) to GCS.
+// This is used by the hub to populate its cached copy of a linked grove.
+type GroveWorkspaceUploadRequest struct {
+	// GroveID is the grove identifier.
+	GroveID string `json:"groveId"`
+	// StoragePath is the path within the bucket where files should be uploaded.
+	StoragePath string `json:"storagePath"`
+	// WorkspacePath is the local filesystem path to the grove workspace on this broker.
+	// Provided by the hub from the GroveProvider.LocalPath.
+	WorkspacePath string `json:"workspacePath"`
+	// Bucket is the GCS bucket name for storage.
+	Bucket string `json:"bucket,omitempty"`
+	// ExcludePatterns are glob patterns to exclude from the upload.
+	ExcludePatterns []string `json:"excludePatterns,omitempty"`
+}
+
+// GroveWorkspaceUploadResponse is the response after uploading a grove workspace.
+type GroveWorkspaceUploadResponse struct {
+	// Manifest contains the list of files uploaded with their hashes.
+	Manifest *transfer.Manifest `json:"manifest"`
+	// UploadedFiles is the number of files uploaded.
+	UploadedFiles int `json:"uploadedFiles"`
+	// UploadedBytes is the total size of uploaded files.
+	UploadedBytes int64 `json:"uploadedBytes"`
+}
+
+// handleGroveWorkspaceUpload handles POST /api/v1/workspace/grove-upload
+// It uploads the grove's workspace directory to GCS so the hub can cache it.
+func (s *Server) handleGroveWorkspaceUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		MethodNotAllowed(w)
+		return
+	}
+
+	ctx := r.Context()
+
+	var req GroveWorkspaceUploadRequest
+	if err := readJSON(r, &req); err != nil {
+		BadRequest(w, "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Validate required fields
+	if req.GroveID == "" {
+		ValidationError(w, "groveId is required", nil)
+		return
+	}
+	if req.StoragePath == "" {
+		ValidationError(w, "storagePath is required", nil)
+		return
+	}
+	if req.WorkspacePath == "" {
+		ValidationError(w, "workspacePath is required", nil)
+		return
+	}
+
+	// Get bucket from request or config
+	bucket := req.Bucket
+	if bucket == "" {
+		bucket = s.config.StorageBucket
+	}
+	if bucket == "" {
+		ValidationError(w, "bucket is required (not configured on broker)", nil)
+		return
+	}
+
+	// Verify workspace path exists
+	if _, err := os.Stat(req.WorkspacePath); err != nil {
+		if os.IsNotExist(err) {
+			NotFound(w, "Grove workspace path")
+			return
+		}
+		RuntimeError(w, "Failed to access workspace path: "+err.Error())
+		return
+	}
+
+	if s.config.Debug {
+		slog.Debug("Grove workspace upload requested",
+			"groveId", req.GroveID,
+			"bucket", bucket,
+			"storagePath", req.StoragePath,
+			"workspacePath", req.WorkspacePath,
+		)
+	}
+
+	// Build manifest from grove workspace
+	manifest, err := s.buildWorkspaceManifest(req.WorkspacePath, req.ExcludePatterns)
+	if err != nil {
+		RuntimeError(w, "Failed to build workspace manifest: "+err.Error())
+		return
+	}
+
+	// Sync workspace to GCS using rclone
+	filesPath := req.StoragePath + "/files"
+	if err := gcp.SyncToGCS(ctx, req.WorkspacePath, bucket, filesPath); err != nil {
+		RuntimeError(w, "Failed to upload workspace to GCS: "+err.Error())
+		return
+	}
+
+	// Upload the manifest
+	if err := s.uploadManifest(ctx, bucket, req.StoragePath, manifest); err != nil {
+		RuntimeError(w, "Failed to upload manifest: "+err.Error())
+		return
+	}
+
+	// Calculate response stats
+	var totalBytes int64
+	for _, f := range manifest.Files {
+		totalBytes += f.Size
+	}
+
+	resp := GroveWorkspaceUploadResponse{
+		Manifest:      manifest,
+		UploadedFiles: len(manifest.Files),
+		UploadedBytes: totalBytes,
+	}
+
+	if s.config.Debug {
+		slog.Debug("Grove workspace upload complete",
+			"groveId", req.GroveID,
+			"files", resp.UploadedFiles,
+			"bytes", resp.UploadedBytes,
+		)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}

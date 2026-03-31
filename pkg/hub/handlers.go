@@ -3658,6 +3658,20 @@ func (s *Server) handleGroveRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for nested /workspace/cache/ paths (linked grove cache management)
+	if subPath == "workspace/cache/refresh" {
+		s.handleGroveCacheRefresh(w, r, groveID)
+		return
+	}
+	if subPath == "workspace/cache/status" {
+		s.handleGroveCacheStatus(w, r, groveID)
+		return
+	}
+	if subPath == "workspace/cache/notify" {
+		s.handleGroveCacheNotify(w, r, groveID)
+		return
+	}
+
 	// Check for nested /workspace/pull path (git pull for shared-workspace groves)
 	if subPath == "workspace/pull" {
 		s.handleGroveWorkspacePull(w, r, groveID)

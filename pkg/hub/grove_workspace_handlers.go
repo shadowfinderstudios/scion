@@ -83,16 +83,10 @@ func (s *Server) handleGroveWorkspace(w http.ResponseWriter, r *http.Request, gr
 		return
 	}
 
-	// Only hub-native groves and shared-workspace git groves have a managed workspace
-	if grove.GitRemote != "" && !grove.IsSharedWorkspace() {
-		Conflict(w, "Workspace file management is only available for hub-native and shared-workspace groves")
-		return
-	}
-
-	// Resolve workspace path
-	workspacePath, err := hubNativeGrovePath(grove.Slug)
+	// Resolve workspace path — supports hub-native, shared-workspace, and linked groves
+	workspacePath, err := s.resolveGroveWebDAVPath(ctx, grove)
 	if err != nil {
-		InternalError(w)
+		Conflict(w, err.Error())
 		return
 	}
 
@@ -395,16 +389,10 @@ func (s *Server) handleGroveWorkspaceArchive(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Only hub-native groves and shared-workspace git groves have a managed workspace
-	if grove.GitRemote != "" && !grove.IsSharedWorkspace() {
-		Conflict(w, "Workspace file management is only available for hub-native and shared-workspace groves")
-		return
-	}
-
-	// Resolve workspace path
-	workspacePath, err := hubNativeGrovePath(grove.Slug)
+	// Resolve workspace path — supports hub-native, shared-workspace, and linked groves
+	workspacePath, err := s.resolveGroveWebDAVPath(ctx, grove)
 	if err != nil {
-		InternalError(w)
+		Conflict(w, err.Error())
 		return
 	}
 

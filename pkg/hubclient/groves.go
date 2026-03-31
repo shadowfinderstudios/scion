@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/apiclient"
 )
@@ -65,6 +66,13 @@ type GroveService interface {
 
 	// UpdateSettings updates grove settings.
 	UpdateSettings(ctx context.Context, groveID string, settings *GroveSettings) (*GroveSettings, error)
+
+	// RefreshCache triggers a cache refresh for a linked grove.
+	// The hub pulls the workspace from a connected provider broker.
+	RefreshCache(ctx context.Context, groveID string) (*GroveCacheRefreshResponse, error)
+
+	// GetCacheStatus returns the cache status for a grove workspace.
+	GetCacheStatus(ctx context.Context, groveID string) (*GroveCacheStatusResponse, error)
 }
 
 // groveService is the implementation of GroveService.
@@ -397,4 +405,41 @@ func (s *groveService) DeleteAgent(ctx context.Context, groveID, agentID string,
 		return err
 	}
 	return apiclient.CheckResponse(resp)
+}
+
+// GroveCacheRefreshResponse is the response for a grove cache refresh operation.
+type GroveCacheRefreshResponse struct {
+	GroveID    string    `json:"groveId"`
+	BrokerID   string    `json:"brokerId"`
+	FileCount  int       `json:"fileCount"`
+	TotalBytes int64     `json:"totalBytes"`
+	CachedAt   time.Time `json:"cachedAt"`
+}
+
+// GroveCacheStatusResponse is the response for grove cache status.
+type GroveCacheStatusResponse struct {
+	GroveID     string     `json:"groveId"`
+	Cached      bool       `json:"cached"`
+	BrokerID    string     `json:"brokerId,omitempty"`
+	FileCount   int        `json:"fileCount"`
+	TotalBytes  int64      `json:"totalBytes"`
+	LastRefresh *time.Time `json:"lastRefresh,omitempty"`
+}
+
+// RefreshCache triggers a cache refresh for a linked grove.
+func (s *groveService) RefreshCache(ctx context.Context, groveID string) (*GroveCacheRefreshResponse, error) {
+	resp, err := s.c.transport.Post(ctx, "/api/v1/groves/"+groveID+"/workspace/cache/refresh", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return apiclient.DecodeResponse[GroveCacheRefreshResponse](resp)
+}
+
+// GetCacheStatus returns the cache status for a grove workspace.
+func (s *groveService) GetCacheStatus(ctx context.Context, groveID string) (*GroveCacheStatusResponse, error) {
+	resp, err := s.c.transport.Get(ctx, "/api/v1/groves/"+groveID+"/workspace/cache/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	return apiclient.DecodeResponse[GroveCacheStatusResponse](resp)
 }
