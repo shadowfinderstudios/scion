@@ -1300,3 +1300,17 @@ const (
 	MaintenanceStatusCompleted = "completed"
 	MaintenanceStatusFailed    = "failed"
 )
+
+// =============================================================================
+// Grove Sync State (Workspace Sync Metadata)
+// =============================================================================
+
+// GroveSyncState tracks sync metadata per grove (and optionally per broker).
+type GroveSyncState struct {
+	GroveID       string     `json:"groveId"`
+	BrokerID      string     `json:"brokerId,omitempty"`
+	LastSyncTime  *time.Time `json:"lastSyncTime,omitempty"`
+	LastCommitSHA string     `json:"lastCommitSha,omitempty"`
+	FileCount     int        `json:"fileCount"`
+	TotalBytes    int64      `json:"totalBytes"`
+}

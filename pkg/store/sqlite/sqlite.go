@@ -117,6 +117,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		migrationV39,
 		migrationV40,
 		migrationV41,
+		migrationV42,
 	}
 
 	// Create migrations table if not exists
@@ -1047,6 +1048,20 @@ VALUES (
     'operation',
     'pending'
 );
+`
+
+const migrationV42 = `
+CREATE TABLE IF NOT EXISTS grove_sync_state (
+	grove_id TEXT NOT NULL,
+	broker_id TEXT NOT NULL DEFAULT '',
+	last_sync_time TIMESTAMP,
+	last_commit_sha TEXT,
+	file_count INTEGER NOT NULL DEFAULT 0,
+	total_bytes INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (grove_id, broker_id),
+	FOREIGN KEY (grove_id) REFERENCES groves(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_grove_sync_state_grove ON grove_sync_state(grove_id);
 `
 
 // Helper functions for JSON marshaling/unmarshaling

@@ -3644,6 +3644,20 @@ func (s *Server) handleGroveRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for nested /dav/ path (WebDAV endpoint for grove workspace sync)
+	if strings.HasPrefix(subPath, "dav") {
+		davPath := strings.TrimPrefix(subPath, "dav")
+		davPath = strings.TrimPrefix(davPath, "/")
+		s.handleGroveWebDAV(w, r, groveID, davPath)
+		return
+	}
+
+	// Check for nested /sync/status path (sync metadata)
+	if subPath == "sync/status" {
+		s.handleGroveSyncStatus(w, r, groveID)
+		return
+	}
+
 	// Check for nested /workspace/pull path (git pull for shared-workspace groves)
 	if subPath == "workspace/pull" {
 		s.handleGroveWorkspacePull(w, r, groveID)

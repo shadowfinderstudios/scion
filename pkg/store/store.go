@@ -99,6 +99,9 @@ type Store interface {
 
 	// Maintenance operations (Admin Maintenance Panel)
 	MaintenanceStore
+
+	// Grove Sync State operations (Workspace Sync Metadata)
+	GroveSyncStateStore
 }
 
 // AgentStore defines agent-related persistence operations.
@@ -1006,4 +1009,26 @@ type MaintenanceStore interface {
 
 	// ListMaintenanceRuns returns runs for a given operation key, ordered by started_at DESC.
 	ListMaintenanceRuns(ctx context.Context, operationKey string, limit int) ([]MaintenanceOperationRun, error)
+}
+
+// =============================================================================
+// Grove Sync State (Workspace Sync Metadata)
+// =============================================================================
+
+// GroveSyncStateStore manages sync metadata for grove workspace synchronization.
+type GroveSyncStateStore interface {
+	// UpsertGroveSyncState creates or updates sync state for a grove (optionally per broker).
+	UpsertGroveSyncState(ctx context.Context, state *GroveSyncState) error
+
+	// GetGroveSyncState retrieves sync state for a grove and optional broker.
+	// Pass empty brokerID for hub-native grove state.
+	// Returns ErrNotFound if no sync state exists.
+	GetGroveSyncState(ctx context.Context, groveID, brokerID string) (*GroveSyncState, error)
+
+	// ListGroveSyncStates returns all sync states for a grove (across all brokers).
+	ListGroveSyncStates(ctx context.Context, groveID string) ([]GroveSyncState, error)
+
+	// DeleteGroveSyncState removes sync state for a grove and optional broker.
+	// Returns ErrNotFound if the state doesn't exist.
+	DeleteGroveSyncState(ctx context.Context, groveID, brokerID string) error
 }
