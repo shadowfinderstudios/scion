@@ -1342,12 +1342,13 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request, id string) 
 	}
 
 	var updates struct {
-		Name         string            `json:"name,omitempty"`
-		Labels       map[string]string `json:"labels,omitempty"`
-		Annotations  map[string]string `json:"annotations,omitempty"`
-		TaskSummary  string            `json:"taskSummary,omitempty"`
-		Config       *api.ScionConfig  `json:"config,omitempty"`
-		StateVersion int64             `json:"stateVersion"`
+		Name         string                 `json:"name,omitempty"`
+		Labels       map[string]string      `json:"labels,omitempty"`
+		Annotations  map[string]string      `json:"annotations,omitempty"`
+		TaskSummary  string                 `json:"taskSummary,omitempty"`
+		Config       *api.ScionConfig       `json:"config,omitempty"`
+		GCPIdentity  *GCPIdentityAssignment `json:"gcp_identity,omitempty"`
+		StateVersion int64                  `json:"stateVersion"`
 	}
 
 	if err := readJSON(r, &updates); err != nil {
@@ -1409,6 +1410,46 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request, id string) 
 			agent.AppliedConfig.Env = cfg.Env
 		}
 		agent.AppliedConfig.InlineConfig = cfg
+	}
+
+	// Apply GCP identity update (only allowed for agents in 'created' phase)
+	if updates.GCPIdentity != nil {
+		if agent.Phase != "created" {
+			Conflict(w, "GCP identity can only be updated for agents in 'created' phase")
+			return
+		}
+		if agent.AppliedConfig == nil {
+			agent.AppliedConfig = &store.AgentAppliedConfig{}
+		}
+		switch updates.GCPIdentity.MetadataMode {
+		case store.GCPMetadataModeBlock:
+			agent.AppliedConfig.GCPIdentity = &store.GCPIdentityConfig{
+				MetadataMode: store.GCPMetadataModeBlock,
+			}
+		case store.GCPMetadataModePassthrough:
+			agent.AppliedConfig.GCPIdentity = &store.GCPIdentityConfig{
+				MetadataMode: store.GCPMetadataModePassthrough,
+			}
+		case store.GCPMetadataModeAssign:
+			if updates.GCPIdentity.ServiceAccountID == "" {
+				ValidationError(w, "service_account_id is required when metadata_mode is 'assign'", nil)
+				return
+			}
+			sa, err := s.store.GetGCPServiceAccount(ctx, updates.GCPIdentity.ServiceAccountID)
+			if err != nil {
+				writeErrorFromErr(w, err, "GCP service account not found")
+				return
+			}
+			agent.AppliedConfig.GCPIdentity = &store.GCPIdentityConfig{
+				MetadataMode:        store.GCPMetadataModeAssign,
+				ServiceAccountID:    sa.ID,
+				ServiceAccountEmail: sa.Email,
+				ProjectID:           sa.ProjectID,
+			}
+		default:
+			ValidationError(w, "invalid metadata_mode: must be 'block', 'passthrough', or 'assign'", nil)
+			return
+		}
 	}
 
 	if err := s.store.UpdateAgent(ctx, agent); err != nil {
