@@ -39,7 +39,7 @@ export class ScionGCPServiceAccountList extends LitElement {
   @state() private error: string | null = null;
   @state() private listCapabilities: Capabilities | undefined;
 
-  // Add dialog state
+  // Register dialog state (BYOSA — bring your own service account)
   @state() private dialogOpen = false;
   @state() private dialogEmail = '';
   @state() private dialogProjectId = '';
@@ -288,8 +288,8 @@ export class ScionGCPServiceAccountList extends LitElement {
       this.closeDialog();
       await this.loadAccounts();
     } catch (err) {
-      console.error('Failed to add service account:', err);
-      this.dialogError = err instanceof Error ? err.message : 'Failed to add service account';
+      console.error('Failed to register service account:', err);
+      this.dialogError = err instanceof Error ? err.message : 'Failed to register service account';
     } finally {
       this.dialogLoading = false;
     }
@@ -447,7 +447,7 @@ export class ScionGCPServiceAccountList extends LitElement {
               ${canCreate
                 ? html`<sl-button variant="primary" @click=${this.openAddDialog}>
                     <sl-icon slot="prefix" name="plus-lg"></sl-icon>
-                    Add Service Account
+                    Register Existing
                   </sl-button>`
                 : ''}
               ${canMint
@@ -481,7 +481,7 @@ export class ScionGCPServiceAccountList extends LitElement {
             ? html`
                 <sl-button variant="primary" size="small" @click=${this.openAddDialog}>
                   <sl-icon slot="prefix" name="plus-lg"></sl-icon>
-                  Add Service Account
+                  Register Existing
                 </sl-button>
               `
             : ''}
@@ -631,12 +631,12 @@ export class ScionGCPServiceAccountList extends LitElement {
       <div class="empty-state">
         <sl-icon name="shield-lock"></sl-icon>
         <h3>No GCP Service Accounts</h3>
-        <p>Register GCP service accounts to assign cloud identities to agents in this grove.</p>
+        <p>Register an existing GCP service account, or mint a new one in the Hub's project.</p>
         ${can(this.listCapabilities, 'create')
           ? html`
               <sl-button variant="primary" size="small" @click=${this.openAddDialog}>
                 <sl-icon slot="prefix" name="plus-lg"></sl-icon>
-                Add Service Account
+                Register Existing
               </sl-button>
             `
           : ''}
@@ -660,7 +660,7 @@ export class ScionGCPServiceAccountList extends LitElement {
   private renderDialog() {
     return html`
       <sl-dialog
-        label="Add GCP Service Account"
+        label="Register GCP Service Account"
         ?open=${this.dialogOpen}
         @sl-request-close=${this.closeDialog}
       >
@@ -696,7 +696,7 @@ export class ScionGCPServiceAccountList extends LitElement {
 
           <div class="dialog-hint">
             <sl-icon name="info-circle"></sl-icon>
-            The Hub will automatically attempt to verify the service account after creation.
+            The Hub will automatically attempt to verify impersonation access after registration.
           </div>
 
           ${this.dialogError ? html`<div class="dialog-error">${this.dialogError}</div>` : nothing}
@@ -717,7 +717,7 @@ export class ScionGCPServiceAccountList extends LitElement {
           ?disabled=${this.dialogLoading}
           @click=${this.handleAdd}
         >
-          Add
+          Register
         </sl-button>
       </sl-dialog>
     `;
