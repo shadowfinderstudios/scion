@@ -294,7 +294,7 @@ func (b *GCPBackend) Resolve(ctx context.Context, userID, groveID, brokerID stri
 	for _, sv := range merged {
 		result = append(result, sv)
 	}
-	return result, nil
+	return DeduplicateByTarget(result), nil
 }
 
 // accessLatestVersion retrieves the latest version of a secret from GCP SM.

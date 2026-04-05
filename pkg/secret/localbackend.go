@@ -161,7 +161,7 @@ func (b *LocalBackend) Resolve(ctx context.Context, userID, groveID, brokerID st
 	for _, sv := range merged {
 		result = append(result, sv)
 	}
-	return result, nil
+	return DeduplicateByTarget(result), nil
 }
 
 // toStoreSecret converts a SetSecretInput to a store.Secret.

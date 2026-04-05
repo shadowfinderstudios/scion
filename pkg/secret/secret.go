@@ -20,6 +20,7 @@ package secret
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -113,4 +114,78 @@ type SecretBackend interface {
 
 	// HubID returns the hub instance ID used for hub-scoped secret namespacing.
 	HubID() string
+}
+
+// scopePrecedence returns a numeric rank for the given scope string.
+// Higher values indicate higher precedence. Unknown scopes get 0.
+func scopePrecedence(scope string) int {
+	switch scope {
+	case ScopeHub:
+		return 1
+	case ScopeUser:
+		return 2
+	case ScopeGrove:
+		return 3
+	case ScopeRuntimeBroker:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// ScopeHub is the hub-level scope constant. It is defined in the store package
+// but duplicated here to avoid a circular import in the precedence helper.
+const ScopeHub = "hub"
+
+// DeduplicateByTarget resolves conflicts where multiple secrets (with different
+// names) map to the same injection target. For each target, the secret from the
+// highest-precedence scope wins. If two secrets at the same scope share a
+// target, the last one encountered is kept (non-deterministic from map
+// iteration, but this is a misconfiguration).
+func DeduplicateByTarget(secrets []SecretWithValue) []SecretWithValue {
+	// Index: target → best secret seen so far
+	type winner struct {
+		index      int
+		precedence int
+	}
+	targetWinners := make(map[string]winner)
+
+	for i, s := range secrets {
+		key := s.SecretType + ":" + s.Target
+		prec := scopePrecedence(s.Scope)
+		w, exists := targetWinners[key]
+		if !exists || prec >= w.precedence {
+			if exists {
+				loser := secrets[w.index]
+				slog.Warn("duplicate secret target: higher-scope secret takes precedence",
+					"target", s.Target,
+					"type", s.SecretType,
+					"winner_name", s.Name,
+					"winner_scope", s.Scope,
+					"replaced_name", loser.Name,
+					"replaced_scope", loser.Scope,
+				)
+			}
+			targetWinners[key] = winner{index: i, precedence: prec}
+		} else {
+			slog.Warn("duplicate secret target: higher-scope secret takes precedence",
+				"target", s.Target,
+				"type", s.SecretType,
+				"winner_name", secrets[w.index].Name,
+				"winner_scope", secrets[w.index].Scope,
+				"replaced_name", s.Name,
+				"replaced_scope", s.Scope,
+			)
+		}
+	}
+
+	result := make([]SecretWithValue, 0, len(targetWinners))
+	// Preserve original ordering of winners
+	for i, s := range secrets {
+		key := s.SecretType + ":" + s.Target
+		if w, ok := targetWinners[key]; ok && w.index == i {
+			result = append(result, s)
+		}
+	}
+	return result
 }

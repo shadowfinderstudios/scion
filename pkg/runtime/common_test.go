@@ -1145,3 +1145,39 @@ func TestBuildCommonRunArgs_ExtraHosts(t *testing.T) {
 		t.Errorf("expected --add-host host.docker.internal:host-gateway in args, got: %v", args)
 	}
 }
+
+func TestWriteFileSecrets_DeduplicatesByTarget(t *testing.T) {
+	homeDir := t.TempDir()
+	containerHome := "/home/scion"
+
+	secrets := []api.ResolvedSecret{
+		{Name: "user-cert", Type: "file", Target: "/tmp/my-secret.json", Value: "user-data", Source: "user"},
+		{Name: "grove-cert", Type: "file", Target: "/tmp/my-secret.json", Value: "grove-data", Source: "grove"},
+		{Name: "other-file", Type: "file", Target: "/tmp/other.json", Value: "other-data", Source: "user"},
+		{Name: "env-secret", Type: "environment", Target: "FOO", Value: "bar", Source: "user"},
+	}
+
+	mounts, err := writeFileSecrets(homeDir, containerHome, secrets)
+	if err != nil {
+		t.Fatalf("writeFileSecrets failed: %v", err)
+	}
+
+	// Should produce exactly 2 mounts: one for /tmp/my-secret.json (last wins) and one for /tmp/other.json
+	if len(mounts) != 2 {
+		t.Fatalf("expected 2 mount specs, got %d: %v", len(mounts), mounts)
+	}
+
+	// The /tmp/my-secret.json mount should use the grove-cert (last entry wins)
+	var mySecretMount string
+	for _, m := range mounts {
+		if strings.Contains(m, "/tmp/my-secret.json") {
+			mySecretMount = m
+		}
+	}
+	if mySecretMount == "" {
+		t.Fatal("expected mount for /tmp/my-secret.json")
+	}
+	if !strings.Contains(mySecretMount, "grove-cert") {
+		t.Errorf("expected grove-cert to win for duplicate target, got: %s", mySecretMount)
+	}
+}

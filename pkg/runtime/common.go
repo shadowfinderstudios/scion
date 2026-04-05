@@ -594,13 +594,41 @@ func applyResolvedAuth(config RunConfig, addEnv func(string, string), addVolume 
 // The containerHome parameter is the container user's home directory (e.g., /home/gemini)
 // and is used to expand ~/ prefixes in target paths.
 func writeFileSecrets(homeDir string, containerHome string, secrets []api.ResolvedSecret) ([]string, error) {
-	var mountSpecs []string
 	secretsDir := filepath.Join(filepath.Dir(homeDir), "secrets")
 
+	// Deduplicate by container target path (defense-in-depth — the secret
+	// backend should already have resolved target conflicts, but if multiple
+	// file secrets still share a target we keep only the last one, which
+	// corresponds to the highest-scope entry when the list is ordered).
+	type fileEntry struct {
+		secret api.ResolvedSecret
+		index  int
+	}
+	targetMap := make(map[string]fileEntry)
+	var targetOrder []string
+	idx := 0
 	for _, s := range secrets {
 		if s.Type != "file" {
 			continue
 		}
+		containerTarget := expandTildeTarget(s.Target, containerHome)
+		if _, exists := targetMap[containerTarget]; !exists {
+			targetOrder = append(targetOrder, containerTarget)
+		} else {
+			slog.Warn("writeFileSecrets: duplicate container target, keeping later entry",
+				"target", containerTarget,
+				"kept", s.Name,
+				"replaced", targetMap[containerTarget].secret.Name,
+			)
+		}
+		targetMap[containerTarget] = fileEntry{secret: s, index: idx}
+		idx++
+	}
+
+	var mountSpecs []string
+	for _, containerTarget := range targetOrder {
+		entry := targetMap[containerTarget]
+		s := entry.secret
 
 		// Decode base64-encoded file content
 		data, err := base64.StdEncoding.DecodeString(s.Value)
@@ -617,9 +645,6 @@ func writeFileSecrets(homeDir string, containerHome string, secrets []api.Resolv
 		if err := os.WriteFile(hostPath, data, 0600); err != nil {
 			return nil, fmt.Errorf("failed to write secret file %s: %w", s.Name, err)
 		}
-
-		// Expand ~/ to the container user's home directory
-		containerTarget := expandTildeTarget(s.Target, containerHome)
 
 		// Pre-create the parent directory of the mount target inside the
 		// agent home so that Docker/Podman does not create it as root
@@ -679,14 +704,21 @@ type secretMapEntry struct {
 // uses to copy file secrets from the shared volume to their target paths.
 // The containerHome parameter is used to expand ~/ prefixes in target paths.
 func writeSecretMap(homeDir string, containerHome string, secrets []api.ResolvedSecret) error {
+	// Deduplicate by container target (mirrors writeFileSecrets logic)
+	seen := make(map[string]bool)
 	var entries []secretMapEntry
 	for _, s := range secrets {
 		if s.Type != "file" {
 			continue
 		}
+		target := expandTildeTarget(s.Target, containerHome)
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
 		entries = append(entries, secretMapEntry{
 			Name:   s.Name,
-			Target: expandTildeTarget(s.Target, containerHome),
+			Target: target,
 			Source: s.Name, // filename within secrets/ volume
 		})
 	}

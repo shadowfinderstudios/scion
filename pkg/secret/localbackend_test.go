@@ -525,3 +525,139 @@ func TestLocalBackend_ResolveExcludesInternalSecrets(t *testing.T) {
 		t.Errorf("expected 2 resolved secrets, got %d", len(resolved))
 	}
 }
+
+func TestLocalBackend_ResolveDuplicateTargetAcrossScopes(t *testing.T) {
+	backend, s := createTestBackend(t)
+	ctx := context.Background()
+
+	// User-level file secret targeting /tmp/my-secret.json
+	seedSecret(t, s, &store.Secret{
+		ID:             "u1",
+		Key:            "my-svc-account",
+		EncryptedValue: "user-cert-data",
+		SecretType:     store.SecretTypeFile,
+		Target:         "/tmp/my-secret.json",
+		Scope:          store.ScopeUser,
+		ScopeID:        "user-1",
+		InjectionMode:  store.InjectionModeAlways,
+	})
+
+	// Grove-level file secret targeting the SAME path
+	seedSecret(t, s, &store.Secret{
+		ID:             "g1",
+		Key:            "my-key",
+		EncryptedValue: "grove-cert-data",
+		SecretType:     store.SecretTypeFile,
+		Target:         "/tmp/my-secret.json",
+		Scope:          store.ScopeGrove,
+		ScopeID:        "grove-1",
+		InjectionMode:  store.InjectionModeAlways,
+	})
+
+	resolved, err := backend.Resolve(ctx, "user-1", "grove-1", "")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	// Only one secret should survive for the target /tmp/my-secret.json
+	var fileSecrets []SecretWithValue
+	for _, sv := range resolved {
+		if sv.SecretType == TypeFile && sv.Target == "/tmp/my-secret.json" {
+			fileSecrets = append(fileSecrets, sv)
+		}
+	}
+	if len(fileSecrets) != 1 {
+		t.Fatalf("expected 1 file secret for /tmp/my-secret.json, got %d", len(fileSecrets))
+	}
+
+	// Grove-level (higher scope) should win
+	if fileSecrets[0].Name != "my-key" {
+		t.Errorf("expected grove-level secret 'my-key' to win, got %q", fileSecrets[0].Name)
+	}
+	if fileSecrets[0].Value != "grove-cert-data" {
+		t.Errorf("expected grove-level value, got %q", fileSecrets[0].Value)
+	}
+}
+
+func TestLocalBackend_ResolveDuplicateEnvTargetAcrossScopes(t *testing.T) {
+	backend, s := createTestBackend(t)
+	ctx := context.Background()
+
+	// User-level env secret targeting FOO_VAR
+	seedSecret(t, s, &store.Secret{
+		ID:             "u1",
+		Key:            "user-foo",
+		EncryptedValue: "user-val",
+		SecretType:     store.SecretTypeEnvironment,
+		Target:         "FOO_VAR",
+		Scope:          store.ScopeUser,
+		ScopeID:        "user-1",
+	})
+
+	// Grove-level env secret targeting the SAME env var
+	seedSecret(t, s, &store.Secret{
+		ID:             "g1",
+		Key:            "grove-foo",
+		EncryptedValue: "grove-val",
+		SecretType:     store.SecretTypeEnvironment,
+		Target:         "FOO_VAR",
+		Scope:          store.ScopeGrove,
+		ScopeID:        "grove-1",
+	})
+
+	resolved, err := backend.Resolve(ctx, "user-1", "grove-1", "")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	var envSecrets []SecretWithValue
+	for _, sv := range resolved {
+		if sv.SecretType == TypeEnvironment && sv.Target == "FOO_VAR" {
+			envSecrets = append(envSecrets, sv)
+		}
+	}
+	if len(envSecrets) != 1 {
+		t.Fatalf("expected 1 env secret for FOO_VAR, got %d", len(envSecrets))
+	}
+	if envSecrets[0].Name != "grove-foo" {
+		t.Errorf("expected grove-level secret to win, got %q", envSecrets[0].Name)
+	}
+}
+
+func TestDeduplicateByTarget_DifferentTypes(t *testing.T) {
+	// File and env secrets with the same target string should NOT conflict
+	// because they are different injection types.
+	secrets := []SecretWithValue{
+		{
+			SecretMeta: SecretMeta{Name: "env-secret", SecretType: TypeEnvironment, Target: "MY_VAR", Scope: ScopeUser},
+			Value:      "env-val",
+		},
+		{
+			SecretMeta: SecretMeta{Name: "file-secret", SecretType: TypeFile, Target: "MY_VAR", Scope: ScopeUser},
+			Value:      "file-val",
+		},
+	}
+
+	result := DeduplicateByTarget(secrets)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 secrets (different types), got %d", len(result))
+	}
+}
+
+func TestDeduplicateByTarget_NoDuplicates(t *testing.T) {
+	secrets := []SecretWithValue{
+		{
+			SecretMeta: SecretMeta{Name: "a", SecretType: TypeFile, Target: "/path/a", Scope: ScopeUser},
+			Value:      "val-a",
+		},
+		{
+			SecretMeta: SecretMeta{Name: "b", SecretType: TypeFile, Target: "/path/b", Scope: ScopeGrove},
+			Value:      "val-b",
+		},
+	}
+
+	result := DeduplicateByTarget(secrets)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 secrets (no duplicates), got %d", len(result))
+	}
+}
