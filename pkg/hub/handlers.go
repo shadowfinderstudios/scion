@@ -2029,6 +2029,17 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 				structuredMsg.Sender = "agent:" + agentIdent.ID()
 			}
 		}
+		// Default version, timestamp and type when the client omits them
+		// (e.g. the web UI sends a minimal structured_message).
+		if structuredMsg.Version == 0 {
+			structuredMsg.Version = messages.Version
+		}
+		if structuredMsg.Timestamp == "" {
+			structuredMsg.Timestamp = time.Now().UTC().Format(time.RFC3339)
+		}
+		if structuredMsg.Type == "" {
+			structuredMsg.Type = messages.TypeInstruction
+		}
 	} else if req.Message != "" {
 		plainMessage = req.Message
 		// Build a structured message from the plain text so that downstream
