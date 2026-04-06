@@ -20,6 +20,7 @@ A standalone service that bridges Google Chat (and future Slack) with the Scion 
 - A GCP service account with:
   - Google Chat API permissions (for sending/receiving messages)
   - Access to the Hub's signing key in GCP Secret Manager (for user impersonation)
+  - On a GCE VM, the instance's attached service account can be used via Application Default Credentials (ADC) — no key file needed
 - A Hub admin user account for the chat app to authenticate as
 
 ## GCP Setup
@@ -102,8 +103,10 @@ platforms:
     enabled: true
     # GCP project ID where the Chat app is registered
     project_id: "my-scion-chat"
-    # Service account key for Google Chat API calls
-    credentials: "/path/to/chat-sa-key.json"
+    # Optional: path to a service account key file for Google Chat API calls.
+    # If omitted, Application Default Credentials (ADC) are used — on a GCE VM
+    # this is the instance's attached service account.
+    # credentials: "/path/to/chat-sa-key.json"
     # HTTP endpoint for receiving Google Chat events
     listen_address: ":8443"
     # Public URL of this endpoint (used for action URLs in cards and token audience verification)
@@ -171,7 +174,7 @@ platforms:
   google_chat:
     enabled: true
     project_id: "my-gcp-project"
-    credentials: "./chat-sa-key.json"
+    # credentials: "./chat-sa-key.json"  # optional if using ADC
     listen_address: ":8443"
     external_url: "https://<YOUR_TUNNEL_URL>/chat/events"
     service_account_email: "chat@my-gcp-project.iam.gserviceaccount.com"
@@ -215,18 +218,37 @@ If the Hub was deployed via `scripts/starter-hub/`, the chat app can be installe
 
 The install is idempotent — re-run it after any hub update (`gce-start-hub.sh --full`) to re-apply patches to files the hub scripts may have overwritten.
 
+### Remote install via `gcloud compute ssh`
+
+The install script requires sudo (for systemd, Caddy, and `/usr/local/bin`). On a starter-hub VM, the SSH user has passwordless sudo while the `scion` user does not. Run the install remotely:
+
 ```bash
-# On the Hub VM, as a user with sudo access:
+# Replace INSTANCE and ZONE with your hub VM values.
+# Instance name is "scion-${HUB_NAME}" (e.g., scion-gteam).
+gcloud compute ssh INSTANCE --zone=ZONE --command \
+  'cd /home/scion/scion/extras/scion-chat-app && sudo -u scion make build && sudo make install'
+```
+
+### First-time setup
+
+Before running `make install`, create the chat-app env file on the VM:
+
+```bash
+gcloud compute ssh INSTANCE --zone=ZONE --command '
+  sudo cp /home/scion/scion/extras/scion-chat-app/chat-app.env.sample /home/scion/.scion/chat-app.env
+  sudo chown scion:scion /home/scion/.scion/chat-app.env
+  sudo chmod 600 /home/scion/.scion/chat-app.env
+'
+# Then edit with your values (project ID, SA email, hub user):
+gcloud compute ssh INSTANCE --zone=ZONE --command 'sudo -u scion nano /home/scion/.scion/chat-app.env'
+```
+
+> **Note:** `CHAT_APP_CREDENTIALS` is optional. On a GCE VM the app uses Application Default Credentials (ADC) from the instance's attached service account. If the service account lacks Chat API permissions, the app prints remediation steps including the required `gcloud` commands at startup.
+
+### On-VM install (if you have sudo)
+
+```bash
 cd ~/scion/extras/scion-chat-app
-
-# First time only: create the chat-app env file from the sample
-sudo cp chat-app.env.sample /home/scion/.scion/chat-app.env
-sudo chown scion:scion /home/scion/.scion/chat-app.env
-sudo chmod 600 /home/scion/.scion/chat-app.env
-# Edit with your values (project ID, SA email, credentials path, hub user)
-sudo vi /home/scion/.scion/chat-app.env
-
-# Build and install (re-run this after hub updates)
 make install
 ```
 
