@@ -100,7 +100,7 @@ func (r *CommandRouter) SetMessenger(m Messenger) {
 func (r *CommandRouter) HandleEvent(ctx context.Context, event *ChatEvent) (*EventResponse, error) {
 	switch event.Type {
 	case EventCommand:
-		return r.handleCommand(ctx, event)
+		return nil, r.handleCommand(ctx, event)
 	case EventMessage:
 		return nil, r.handleMessage(ctx, event)
 	case EventAction:
@@ -118,53 +118,63 @@ func (r *CommandRouter) HandleEvent(ctx context.Context, event *ChatEvent) (*Eve
 }
 
 // handleCommand parses "/scion <subcommand> <args>" and routes.
-// Returns a synchronous EventResponse so the Workspace Add-on framework
-// receives a valid response body (prevents "Server error occurred" toast).
-func (r *CommandRouter) handleCommand(ctx context.Context, event *ChatEvent) (*EventResponse, error) {
+func (r *CommandRouter) handleCommand(ctx context.Context, event *ChatEvent) error {
 	parts := strings.Fields(event.Args)
 	if len(parts) == 0 {
+		r.log.Info("command received (no subcommand, showing help)", "space", event.SpaceID, "user", event.UserID)
 		return r.cmdHelp(ctx, event)
 	}
 
 	subcommand := strings.ToLower(parts[0])
 	args := parts[1:]
 
+	r.log.Info("command received", "subcommand", subcommand, "args", strings.Join(args, " "), "space", event.SpaceID, "user", event.UserID)
+
+	var err error
 	switch subcommand {
 	case "list":
-		return r.cmdList(ctx, event, args)
+		err = r.cmdList(ctx, event, args)
 	case "status":
-		return r.cmdStatus(ctx, event, args)
+		err = r.cmdStatus(ctx, event, args)
 	case "start":
-		return r.cmdStart(ctx, event, args)
+		err = r.cmdStart(ctx, event, args)
 	case "stop":
-		return r.cmdStop(ctx, event, args)
+		err = r.cmdStop(ctx, event, args)
 	case "create":
-		return r.cmdCreate(ctx, event, args)
+		err = r.cmdCreate(ctx, event, args)
 	case "delete":
-		return r.cmdDelete(ctx, event, args)
+		err = r.cmdDelete(ctx, event, args)
 	case "logs":
-		return r.cmdLogs(ctx, event, args)
+		err = r.cmdLogs(ctx, event, args)
 	case "link":
-		return r.cmdLink(ctx, event, args)
+		err = r.cmdLink(ctx, event, args)
 	case "unlink":
-		return r.cmdUnlink(ctx, event, args)
+		err = r.cmdUnlink(ctx, event, args)
 	case "register":
-		return r.cmdRegister(ctx, event, args)
+		err = r.cmdRegister(ctx, event, args)
 	case "unregister":
-		return r.cmdUnregister(ctx, event, args)
+		err = r.cmdUnregister(ctx, event, args)
 	case "subscribe":
-		return r.cmdSubscribe(ctx, event, args)
+		err = r.cmdSubscribe(ctx, event, args)
 	case "unsubscribe":
-		return r.cmdUnsubscribe(ctx, event, args)
+		err = r.cmdUnsubscribe(ctx, event, args)
 	case "message", "msg":
-		return r.cmdMessage(ctx, event, args)
+		err = r.cmdMessage(ctx, event, args)
 	case "info":
-		return r.cmdInfo(ctx, event, args)
+		err = r.cmdInfo(ctx, event, args)
 	case "help":
-		return r.cmdHelp(ctx, event)
+		err = r.cmdHelp(ctx, event)
 	default:
-		return r.syncReply(event, fmt.Sprintf("Unknown command: `%s`. Use `/scion help` for available commands.", subcommand))
+		r.log.Warn("unknown command", "subcommand", subcommand)
+		err = r.reply(ctx, event, fmt.Sprintf("Unknown command: `%s`. Use `/scion help` for available commands.", subcommand))
 	}
+
+	if err != nil {
+		r.log.Error("command failed", "subcommand", subcommand, "error", err)
+	} else {
+		r.log.Info("command completed", "subcommand", subcommand)
+	}
+	return err
 }
 
 // handleMessage routes @mention messages to an agent.
@@ -325,24 +335,24 @@ func (r *CommandRouter) handleSpaceRemove(ctx context.Context, event *ChatEvent)
 
 // --- Command implementations ---
 
-func (r *CommandRouter) cmdList(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
+func (r *CommandRouter) cmdList(ctx context.Context, event *ChatEvent, args []string) error {
+	link, err := r.requireSpaceLink(ctx, event)
+	if err != nil || link == nil {
+		return err
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	agents, err := client.GroveAgents(link.GroveID).List(ctx, nil)
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to list agents: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to list agents: %v", err))
 	}
 
 	if len(agents.Agents) == 0 {
-		return r.syncReply(event, fmt.Sprintf("No agents in grove `%s`.", link.GroveSlug))
+		return r.reply(ctx, event, fmt.Sprintf("No agents in grove `%s`.", link.GroveSlug))
 	}
 
 	var sb strings.Builder
@@ -354,27 +364,27 @@ func (r *CommandRouter) cmdList(ctx context.Context, event *ChatEvent, args []st
 		}
 		sb.WriteString(fmt.Sprintf("• `%s` — %s\n", a.Slug, status))
 	}
-	return r.syncReply(event, sb.String())
+	return r.reply(ctx, event, sb.String())
 }
 
-func (r *CommandRouter) cmdStatus(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdStatus(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion status <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion status <agent-slug>`")
 	}
 
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
+	link, err := r.requireSpaceLink(ctx, event)
+	if err != nil || link == nil {
+		return err
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	agent, err := client.GroveAgents(link.GroveID).Get(ctx, args[0])
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to get agent: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to get agent: %v", err))
 	}
 
 	card := Card{
@@ -399,84 +409,85 @@ func (r *CommandRouter) cmdStatus(ctx context.Context, event *ChatEvent, args []
 		},
 	}
 
-	return r.syncCardReply(event, card)
+	_, err = r.messenger.SendCard(ctx, event.SpaceID, card)
+	return err
 }
 
-func (r *CommandRouter) cmdStart(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdStart(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion start <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion start <agent-slug>`")
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	if err := client.Agents().Start(ctx, args[0]); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to start agent: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to start agent: %v", err))
 	}
-	return r.syncReply(event, fmt.Sprintf("Agent `%s` started.", args[0]))
+	return r.reply(ctx, event, fmt.Sprintf("Agent `%s` started.", args[0]))
 }
 
-func (r *CommandRouter) cmdStop(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdStop(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion stop <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion stop <agent-slug>`")
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	if err := client.Agents().Stop(ctx, args[0]); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to stop agent: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to stop agent: %v", err))
 	}
-	return r.syncReply(event, fmt.Sprintf("Agent `%s` stopped.", args[0]))
+	return r.reply(ctx, event, fmt.Sprintf("Agent `%s` stopped.", args[0]))
 }
 
-func (r *CommandRouter) cmdCreate(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdCreate(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion create <agent-name>`")
+		return r.reply(ctx, event, "Usage: `/scion create <agent-name>`")
 	}
 
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
+	link, err := r.requireSpaceLink(ctx, event)
+	if err != nil || link == nil {
+		return err
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
-	createResp, err := client.GroveAgents(link.GroveID).Create(ctx, &hubclient.CreateAgentRequest{
+	resp, err := client.GroveAgents(link.GroveID).Create(ctx, &hubclient.CreateAgentRequest{
 		Name: args[0],
 	})
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to create agent: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to create agent: %v", err))
 	}
-	return r.syncReply(event, fmt.Sprintf("Agent `%s` created (ID: `%s`).", createResp.Agent.Slug, createResp.Agent.ID))
+	return r.reply(ctx, event, fmt.Sprintf("Agent `%s` created (ID: `%s`).", resp.Agent.Slug, resp.Agent.ID))
 }
 
-func (r *CommandRouter) cmdLink(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdLink(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion link <grove-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion link <grove-slug>`")
 	}
 
 	mapping, err := r.idMapper.ResolveOrAutoRegister(ctx, &eventUserLookup{event}, event.UserID, event.Platform)
 	if err != nil || mapping == nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	client, err := r.idMapper.ClientFor(ctx, mapping)
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to create client: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to create client: %v", err))
 	}
 
 	// Look up the grove
 	grove, err := client.Groves().Get(ctx, args[0])
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Grove `%s` not found: %v", args[0], err))
+		return r.reply(ctx, event, fmt.Sprintf("Grove `%s` not found: %v", args[0], err))
 	}
 
 	// Save the link
@@ -488,7 +499,7 @@ func (r *CommandRouter) cmdLink(ctx context.Context, event *ChatEvent, args []st
 		LinkedBy:  mapping.HubUserID,
 	}
 	if err := r.store.SetSpaceLink(link); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to save link: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to save link: %v", err))
 	}
 
 	// Request subscription for the grove's messages via broker plugin
@@ -499,16 +510,16 @@ func (r *CommandRouter) cmdLink(ctx context.Context, event *ChatEvent, args []st
 		}
 	}
 
-	return r.syncReply(event, fmt.Sprintf("This space is now linked to grove `%s`.", grove.Slug))
+	return r.reply(ctx, event, fmt.Sprintf("This space is now linked to grove `%s`.", grove.Slug))
 }
 
-func (r *CommandRouter) cmdUnlink(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdUnlink(ctx context.Context, event *ChatEvent, args []string) error {
 	link, err := r.store.GetSpaceLink(event.SpaceID, event.Platform)
 	if err != nil {
-		return nil, fmt.Errorf("getting space link: %w", err)
+		return fmt.Errorf("getting space link: %w", err)
 	}
 	if link == nil {
-		return r.syncReply(event, "This space is not linked to any grove.")
+		return r.reply(ctx, event, "This space is not linked to any grove.")
 	}
 
 	// Cancel broker subscription
@@ -520,28 +531,28 @@ func (r *CommandRouter) cmdUnlink(ctx context.Context, event *ChatEvent, args []
 	}
 
 	if err := r.store.DeleteSpaceLink(event.SpaceID, event.Platform); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to unlink: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to unlink: %v", err))
 	}
-	return r.syncReply(event, fmt.Sprintf("Unlinked from grove `%s`.", link.GroveSlug))
+	return r.reply(ctx, event, fmt.Sprintf("Unlinked from grove `%s`.", link.GroveSlug))
 }
 
-func (r *CommandRouter) cmdRegister(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdRegister(ctx context.Context, event *ChatEvent, args []string) error {
 	// Check if already registered
 	existing, err := r.idMapper.Resolve(event.UserID, event.Platform)
 	if err != nil {
-		return nil, fmt.Errorf("checking registration: %w", err)
+		return fmt.Errorf("checking registration: %w", err)
 	}
 	if existing != nil {
-		return r.syncReply(event, fmt.Sprintf("You are already registered as `%s`.", existing.HubUserEmail))
+		return r.reply(ctx, event, fmt.Sprintf("You are already registered as `%s`.", existing.HubUserEmail))
 	}
 
 	// Try auto-registration by email (short-circuit)
 	mapping, err := r.idMapper.ResolveOrAutoRegister(ctx, &eventUserLookup{event}, event.UserID, event.Platform)
 	if err != nil {
-		return nil, fmt.Errorf("auto-registration: %w", err)
+		return fmt.Errorf("auto-registration: %w", err)
 	}
 	if mapping != nil {
-		return r.syncReply(event, fmt.Sprintf("Registered! Your chat account is linked to Hub user `%s`.", mapping.HubUserEmail))
+		return r.reply(ctx, event, fmt.Sprintf("Registered! Your chat account is linked to Hub user `%s`.", mapping.HubUserEmail))
 	}
 
 	// No email match — the user's chat email doesn't match any Hub user.
@@ -558,25 +569,25 @@ func (r *CommandRouter) cmdRegister(ctx context.Context, event *ChatEvent, args 
 	}
 
 	// Initiate device auth flow
-	authResp, err := r.adminClient.Auth().RequestDeviceCode(ctx, "")
+	resp, err := r.adminClient.Auth().RequestDeviceCode(ctx, "")
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to start device authorization: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to start device authorization: %v", err))
 	}
 
 	pa := &pendingDeviceAuth{
-		deviceCode: authResp.DeviceCode,
-		userCode:   authResp.UserCode,
-		verifyURL:  authResp.VerificationURL,
-		expiresAt:  time.Now().Add(time.Duration(authResp.ExpiresIn) * time.Second),
-		interval:   time.Duration(authResp.Interval) * time.Second,
+		deviceCode: resp.DeviceCode,
+		userCode:   resp.UserCode,
+		verifyURL:  resp.VerificationURL,
+		expiresAt:  time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second),
+		interval:   time.Duration(resp.Interval) * time.Second,
 	}
 	r.mu.Lock()
 	r.pendingAuth[authKey] = pa
 	r.mu.Unlock()
 
-	verifyURL := authResp.VerificationURL
-	if authResp.VerificationURLComplete != "" {
-		verifyURL = authResp.VerificationURLComplete
+	verifyURL := resp.VerificationURL
+	if resp.VerificationURLComplete != "" {
+		verifyURL = resp.VerificationURLComplete
 	}
 
 	card := Card{
@@ -587,7 +598,7 @@ func (r *CommandRouter) cmdRegister(ctx context.Context, event *ChatEvent, args 
 		Sections: []CardSection{
 			{
 				Widgets: []Widget{
-					{Type: WidgetText, Content: fmt.Sprintf("Your chat email doesn't match any Hub user. Sign in with your Hub account to link it:\n\n*URL:* %s\n*Code:* `%s`", verifyURL, authResp.UserCode)},
+					{Type: WidgetText, Content: fmt.Sprintf("Your chat email doesn't match any Hub user. Sign in with your Hub account to link it:\n\n*URL:* %s\n*Code:* `%s`", verifyURL, resp.UserCode)},
 				},
 			},
 			{
@@ -599,116 +610,72 @@ func (r *CommandRouter) cmdRegister(ctx context.Context, event *ChatEvent, args 
 		},
 	}
 
-	return r.syncCardReply(event, card)
+	_, err = r.messenger.SendCard(ctx, event.SpaceID, card)
+	return err
 }
 
 // pollDeviceAuth polls for device authorization completion and registers the user.
-func (r *CommandRouter) pollDeviceAuth(ctx context.Context, event *ChatEvent, pending *pendingDeviceAuth) (*EventResponse, error) {
+func (r *CommandRouter) pollDeviceAuth(ctx context.Context, event *ChatEvent, pending *pendingDeviceAuth) error {
 	authKey := event.UserID + ":" + event.Platform
 
 	if time.Now().After(pending.expiresAt) {
 		r.mu.Lock()
 		delete(r.pendingAuth, authKey)
 		r.mu.Unlock()
-		return r.syncReply(event, "Device authorization expired. Run `/scion register` to start again.")
+		return r.reply(ctx, event, "Device authorization expired. Run `/scion register` to start again.")
 	}
 
 	resp, err := r.adminClient.Auth().PollDeviceToken(ctx, pending.deviceCode, "")
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to check authorization status: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to check authorization status: %v", err))
 	}
 
 	switch resp.Status {
 	case "authorization_pending":
-		return r.syncReply(event, "Authorization still pending. Complete the flow in your browser, then run `/scion register confirm` again.")
+		return r.reply(ctx, event, "Authorization still pending. Complete the flow in your browser, then run `/scion register confirm` again.")
 	case "expired_token":
 		r.mu.Lock()
 		delete(r.pendingAuth, authKey)
 		r.mu.Unlock()
-		return r.syncReply(event, "Device authorization expired. Run `/scion register` to start again.")
+		return r.reply(ctx, event, "Device authorization expired. Run `/scion register` to start again.")
 	case "slow_down":
-		return r.syncReply(event, "Please wait a moment before trying again.")
+		return r.reply(ctx, event, "Please wait a moment before trying again.")
 	case "":
 		// Success — token received
 		if resp.User == nil {
-			return r.syncReply(event, "Authorization succeeded but no user info returned. Please try again.")
+			return r.reply(ctx, event, "Authorization succeeded but no user info returned. Please try again.")
 		}
 
 		// Register the mapping
 		if err := r.idMapper.Register(event.UserID, event.Platform, resp.User.ID, resp.User.Email); err != nil {
-			return r.syncReply(event, fmt.Sprintf("Authorization succeeded but failed to save registration: %v", err))
+			return r.reply(ctx, event, fmt.Sprintf("Authorization succeeded but failed to save registration: %v", err))
 		}
 
 		r.mu.Lock()
 		delete(r.pendingAuth, authKey)
 		r.mu.Unlock()
 
-		return r.syncReply(event, fmt.Sprintf("Registered! Your chat account is linked to Hub user `%s`.", resp.User.Email))
+		return r.reply(ctx, event, fmt.Sprintf("Registered! Your chat account is linked to Hub user `%s`.", resp.User.Email))
 	default:
-		return r.syncReply(event, fmt.Sprintf("Unexpected authorization status: %s", resp.Status))
+		return r.reply(ctx, event, fmt.Sprintf("Unexpected authorization status: %s", resp.Status))
 	}
 }
 
-func (r *CommandRouter) cmdUnregister(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdUnregister(ctx context.Context, event *ChatEvent, args []string) error {
 	if err := r.idMapper.Unregister(event.UserID, event.Platform); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to unregister: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to unregister: %v", err))
 	}
-	return r.syncReply(event, "Your chat account has been unlinked from your Hub account.")
+	return r.reply(ctx, event, "Your chat account has been unlinked from your Hub account.")
 }
 
-func (r *CommandRouter) cmdDelete(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdDelete(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion delete <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion delete <agent-slug>`")
 	}
-	return r.showDeleteConfirmationSync(ctx, event, args[0])
-}
-
-// showDeleteConfirmationSync presents a confirmation card before deleting an agent.
-// Returns a synchronous response for command handlers.
-func (r *CommandRouter) showDeleteConfirmationSync(ctx context.Context, event *ChatEvent, agentSlug string) (*EventResponse, error) {
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
-	}
-
-	client, err := r.clientForUser(ctx, event)
-	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
-	}
-
-	agent, err := client.GroveAgents(link.GroveID).Get(ctx, agentSlug)
-	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Agent `%s` not found: %v", agentSlug, err))
-	}
-
-	confirmID := fmt.Sprintf("agent.delete.confirm.%s", agent.ID)
-
-	card := Card{
-		Header: CardHeader{
-			Title:    "Confirm Delete",
-			Subtitle: fmt.Sprintf("Agent: %s", agent.Slug),
-		},
-		Sections: []CardSection{
-			{
-				Widgets: []Widget{
-					{Type: WidgetText, Content: fmt.Sprintf("Are you sure you want to delete agent `%s`?\n\nThis action cannot be undone.", agent.Slug)},
-					{Type: WidgetKeyValue, Label: "Name", Content: agent.Name},
-					{Type: WidgetKeyValue, Label: "Phase", Content: agent.Phase},
-					{Type: WidgetKeyValue, Label: "Activity", Content: agent.Activity},
-				},
-			},
-		},
-		Actions: []CardAction{
-			{Label: "Delete", ActionID: confirmID, Style: "danger"},
-			{Label: "Cancel", ActionID: "noop"},
-		},
-	}
-
-	return r.syncCardReply(event, card)
+	return r.showDeleteConfirmation(ctx, event, args[0])
 }
 
 // showDeleteConfirmation presents a confirmation card before deleting an agent.
-// Used by action handlers (async send).
 func (r *CommandRouter) showDeleteConfirmation(ctx context.Context, event *ChatEvent, agentSlug string) error {
 	link, err := r.requireSpaceLink(ctx, event)
 	if err != nil || link == nil {
@@ -765,46 +732,46 @@ func (r *CommandRouter) executeDelete(ctx context.Context, event *ChatEvent, age
 	return r.reply(ctx, event, fmt.Sprintf("Agent `%s` deleted.", agentID))
 }
 
-func (r *CommandRouter) cmdLogs(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdLogs(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion logs <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion logs <agent-slug>`")
 	}
 
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
+	link, err := r.requireSpaceLink(ctx, event)
+	if err != nil || link == nil {
+		return err
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	opts := &hubclient.GetLogsOptions{Tail: 50}
 	logs, err := client.GroveAgents(link.GroveID).GetLogs(ctx, args[0], opts)
 	if err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to get logs for `%s`: %v", args[0], err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to get logs for `%s`: %v", args[0], err))
 	}
 
 	if logs == "" {
-		return r.syncReply(event, fmt.Sprintf("No logs available for agent `%s`.", args[0]))
+		return r.reply(ctx, event, fmt.Sprintf("No logs available for agent `%s`.", args[0]))
 	}
 
 	// Truncate for chat display
 	if len(logs) > 2000 {
 		logs = "...\n" + logs[len(logs)-2000:]
 	}
-	return r.syncReply(event, fmt.Sprintf("*Logs for `%s`:*\n```\n%s\n```", args[0], logs))
+	return r.reply(ctx, event, fmt.Sprintf("*Logs for `%s`:*\n```\n%s\n```", args[0], logs))
 }
 
-func (r *CommandRouter) cmdSubscribe(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdSubscribe(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion subscribe <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion subscribe <agent-slug>`")
 	}
 
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
+	link, err := r.requireSpaceLink(ctx, event)
+	if err != nil || link == nil {
+		return err
 	}
 
 	agentSlug := args[0]
@@ -820,9 +787,9 @@ func (r *CommandRouter) cmdSubscribe(ctx context.Context, event *ChatEvent, args
 			Activities:     activities,
 		}
 		if err := r.store.SetAgentSubscription(sub); err != nil {
-			return r.syncReply(event, fmt.Sprintf("Failed to subscribe: %v", err))
+			return r.reply(ctx, event, fmt.Sprintf("Failed to subscribe: %v", err))
 		}
-		return r.syncReply(event, fmt.Sprintf("Subscribed to notifications for agent `%s`. Filtered to: %s", agentSlug, activities))
+		return r.reply(ctx, event, fmt.Sprintf("Subscribed to notifications for agent `%s`. Filtered to: %s", agentSlug, activities))
 	}
 
 	// Show activity filter dialog with checkboxes
@@ -861,7 +828,8 @@ func (r *CommandRouter) cmdSubscribe(ctx context.Context, event *ChatEvent, args
 		},
 	}
 
-	return r.syncCardReply(event, card)
+	_, err = r.messenger.SendCard(ctx, event.SpaceID, card)
+	return err
 }
 
 // handleSubscribeFilter processes the subscription activity filter dialog submission.
@@ -900,30 +868,30 @@ func (r *CommandRouter) handleSubscribeFilter(ctx context.Context, event *ChatEv
 	return r.reply(ctx, event, msg)
 }
 
-func (r *CommandRouter) cmdUnsubscribe(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdUnsubscribe(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) == 0 {
-		return r.syncReply(event, "Usage: `/scion unsubscribe <agent-slug>`")
+		return r.reply(ctx, event, "Usage: `/scion unsubscribe <agent-slug>`")
 	}
 
 	if err := r.store.DeleteAgentSubscription(event.UserID, event.Platform, args[0]); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to unsubscribe: %v", err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to unsubscribe: %v", err))
 	}
-	return r.syncReply(event, fmt.Sprintf("Unsubscribed from notifications for agent `%s`.", args[0]))
+	return r.reply(ctx, event, fmt.Sprintf("Unsubscribed from notifications for agent `%s`.", args[0]))
 }
 
-func (r *CommandRouter) cmdMessage(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdMessage(ctx context.Context, event *ChatEvent, args []string) error {
 	if len(args) < 2 {
-		return r.syncReply(event, "Usage: `/scion message [--thread <thread-id>] <agent-slug> <text>`")
+		return r.reply(ctx, event, "Usage: `/scion message [--thread <thread-id>] <agent-slug> <text>`")
 	}
 
-	link, resp, err := r.requireSpaceLinkSync(event)
-	if resp != nil || err != nil {
-		return resp, err
+	link, err := r.requireSpaceLink(ctx, event)
+	if err != nil || link == nil {
+		return err
 	}
 
 	client, err := r.clientForUser(ctx, event)
 	if err != nil {
-		return r.syncReply(event, "Authentication required. Use `/scion register` first.")
+		return r.reply(ctx, event, "Authentication required. Use `/scion register` first.")
 	}
 
 	// Parse --thread flag
@@ -938,7 +906,7 @@ func (r *CommandRouter) cmdMessage(ctx context.Context, event *ChatEvent, args [
 	}
 
 	if len(remaining) < 2 {
-		return r.syncReply(event, "Usage: `/scion message [--thread <thread-id>] <agent-slug> <text>`")
+		return r.reply(ctx, event, "Usage: `/scion message [--thread <thread-id>] <agent-slug> <text>`")
 	}
 
 	agentSlug := remaining[0]
@@ -952,23 +920,23 @@ func (r *CommandRouter) cmdMessage(ctx context.Context, event *ChatEvent, args [
 	}
 
 	if err := client.GroveAgents(link.GroveID).SendStructuredMessage(ctx, agentSlug, msg, false, false); err != nil {
-		return r.syncReply(event, fmt.Sprintf("Failed to send message to `%s`: %v", agentSlug, err))
+		return r.reply(ctx, event, fmt.Sprintf("Failed to send message to `%s`: %v", agentSlug, err))
 	}
 
-	replyText := fmt.Sprintf("Message sent to agent `%s`.", agentSlug)
+	reply := fmt.Sprintf("Message sent to agent `%s`.", agentSlug)
 	if threadID != "" {
-		replyText += fmt.Sprintf(" (thread: `%s`)", threadID)
+		reply += fmt.Sprintf(" (thread: `%s`)", threadID)
 	}
-	return r.syncReply(event, replyText)
+	return r.reply(ctx, event, reply)
 }
 
-func (r *CommandRouter) cmdInfo(ctx context.Context, event *ChatEvent, args []string) (*EventResponse, error) {
+func (r *CommandRouter) cmdInfo(ctx context.Context, event *ChatEvent, args []string) error {
 	// User registration state
 	registrationStatus := "Not registered"
 	registeredEmail := ""
 	mapping, err := r.idMapper.Resolve(event.UserID, event.Platform)
 	if err != nil {
-		return nil, fmt.Errorf("checking registration: %w", err)
+		return fmt.Errorf("checking registration: %w", err)
 	}
 	if mapping != nil {
 		registrationStatus = "Registered"
@@ -981,7 +949,7 @@ func (r *CommandRouter) cmdInfo(ctx context.Context, event *ChatEvent, args []st
 	var link *state.SpaceLink
 	link, err = r.store.GetSpaceLink(event.SpaceID, event.Platform)
 	if err != nil {
-		return nil, fmt.Errorf("checking space link: %w", err)
+		return fmt.Errorf("checking space link: %w", err)
 	}
 	if link != nil {
 		linkStatus = "Linked"
@@ -1024,10 +992,11 @@ func (r *CommandRouter) cmdInfo(ctx context.Context, event *ChatEvent, args []st
 		},
 	}
 
-	return r.syncCardReply(event, card)
+	_, err = r.messenger.SendCard(ctx, event.SpaceID, card)
+	return err
 }
 
-func (r *CommandRouter) cmdHelp(ctx context.Context, event *ChatEvent) (*EventResponse, error) {
+func (r *CommandRouter) cmdHelp(ctx context.Context, event *ChatEvent) error {
 	help := `*Scion Chat Bot Commands:*
 
 *Agent Management:*
@@ -1053,13 +1022,12 @@ func (r *CommandRouter) cmdHelp(ctx context.Context, event *ChatEvent) (*EventRe
 
 • ` + "`/scion help`" + ` — Show this help message`
 
-	return r.syncReply(event, help)
+	return r.reply(ctx, event, help)
 }
 
 // --- Helper methods ---
 
-// reply sends a text message asynchronously via REST API.
-// Used by non-command event handlers (actions, messages, dialogs).
+// reply sends a text message back to the space where the event originated.
 func (r *CommandRouter) reply(ctx context.Context, event *ChatEvent, text string) error {
 	_, err := r.messenger.SendMessage(ctx, SendMessageRequest{
 		SpaceID:  event.SpaceID,
@@ -1067,29 +1035,6 @@ func (r *CommandRouter) reply(ctx context.Context, event *ChatEvent, text string
 		Text:     text,
 	})
 	return err
-}
-
-// syncReply builds a synchronous text response for the HTTP body.
-// Used by command handlers so Google Chat receives a valid response.
-func (r *CommandRouter) syncReply(event *ChatEvent, text string) (*EventResponse, error) {
-	return &EventResponse{
-		Message: &SendMessageRequest{
-			SpaceID:  event.SpaceID,
-			ThreadID: event.ThreadID,
-			Text:     text,
-		},
-	}, nil
-}
-
-// syncCardReply builds a synchronous card response for the HTTP body.
-func (r *CommandRouter) syncCardReply(event *ChatEvent, card Card) (*EventResponse, error) {
-	return &EventResponse{
-		Message: &SendMessageRequest{
-			SpaceID:  event.SpaceID,
-			ThreadID: event.ThreadID,
-			Card:     &card,
-		},
-	}, nil
 }
 
 // requireSpaceLink checks that the space is linked to a grove, replying with an error if not.
@@ -1102,20 +1047,6 @@ func (r *CommandRouter) requireSpaceLink(ctx context.Context, event *ChatEvent) 
 		return nil, r.reply(ctx, event, "This space is not linked to a grove. Use `/scion link <grove-slug>` first.")
 	}
 	return link, nil
-}
-
-// requireSpaceLinkSync is the synchronous-response variant of requireSpaceLink,
-// used by command handlers.
-func (r *CommandRouter) requireSpaceLinkSync(event *ChatEvent) (*state.SpaceLink, *EventResponse, error) {
-	link, err := r.store.GetSpaceLink(event.SpaceID, event.Platform)
-	if err != nil {
-		return nil, nil, fmt.Errorf("getting space link: %w", err)
-	}
-	if link == nil {
-		resp, _ := r.syncReply(event, "This space is not linked to a grove. Use `/scion link <grove-slug>` first.")
-		return nil, resp, nil
-	}
-	return link, nil, nil
 }
 
 // clientForUser creates a Hub client authenticated as the event's user.

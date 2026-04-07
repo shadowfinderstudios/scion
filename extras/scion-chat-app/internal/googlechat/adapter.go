@@ -115,6 +115,8 @@ func (a *Adapter) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	a.log.Debug("raw event received", "body_len", len(body))
+
 	var raw rawEvent
 	if err := json.Unmarshal(body, &raw); err != nil {
 		a.log.Error("parsing event", "error", err)
@@ -124,13 +126,24 @@ func (a *Adapter) handleEvent(w http.ResponseWriter, r *http.Request) {
 
 	event := a.normalizeEvent(&raw)
 	if event == nil {
+		a.log.Debug("event normalized to nil, ignoring")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	a.log.Info("event received",
+		"type", event.Type,
+		"space", event.SpaceID,
+		"user", event.UserID,
+		"command", event.Command,
+		"args", event.Args,
+		"action_id", event.ActionID,
+		"is_dialog", event.IsDialogEvent,
+	)
+
 	resp, err := a.eventHandler(r.Context(), event)
 	if err != nil {
-		a.log.Error("handling event", "type", event.Type, "error", err)
+		a.log.Error("handler error", "type", event.Type, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -139,6 +152,7 @@ func (a *Adapter) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if resp != nil {
 		payload := a.buildSyncResponse(resp)
 		if payload != nil {
+			a.log.Info("sending sync response", "type", event.Type, "has_message", resp.Message != nil, "has_dialog", resp.Dialog != nil, "close_dialog", resp.CloseDialog)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			if err := json.NewEncoder(w).Encode(payload); err != nil {
@@ -148,6 +162,29 @@ func (a *Adapter) handleEvent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// For command events the Workspace Add-on framework opens a transient
+	// dialog while waiting for the webhook response.  Returning an empty
+	// body leaves that dialog in a broken state and produces a
+	// "Server error occurred" toast.  Close it explicitly so the async
+	// message (already sent by the handler) is the only thing the user sees.
+	if event.Type == chatapp.EventCommand {
+		a.log.Info("closing transient command dialog", "type", event.Type)
+		payload := map[string]any{
+			"action": map[string]any{
+				"navigations": []any{
+					map[string]any{"endNavigation": "CLOSE_DIALOG"},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			a.log.Error("encoding command close response", "error", err)
+		}
+		return
+	}
+
+	a.log.Debug("sending empty 200 response", "type", event.Type)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -580,11 +617,14 @@ func (a *Adapter) getFormInputs(raw *rawEvent) map[string]string {
 func (a *Adapter) SendMessage(ctx context.Context, req chatapp.SendMessageRequest) (string, error) {
 	payload := map[string]any{}
 
-	if req.Text != "" {
+	hasText := req.Text != ""
+	hasCard := req.Card != nil
+
+	if hasText {
 		payload["text"] = req.Text
 	}
 
-	if req.Card != nil {
+	if hasCard {
 		payload["cardsV2"] = []map[string]any{
 			{
 				"cardId": "scion_card",
@@ -604,8 +644,17 @@ func (a *Adapter) SendMessage(ctx context.Context, req chatapp.SendMessageReques
 		url += "?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
 	}
 
+	a.log.Info("sending async message",
+		"space", req.SpaceID,
+		"thread", req.ThreadID,
+		"has_text", hasText,
+		"has_card", hasCard,
+		"text_len", len(req.Text),
+	)
+
 	respBody, err := a.doPost(ctx, url, payload)
 	if err != nil {
+		a.log.Error("async message failed", "space", req.SpaceID, "error", err)
 		return "", fmt.Errorf("sending message: %w", err)
 	}
 
@@ -615,6 +664,7 @@ func (a *Adapter) SendMessage(ctx context.Context, req chatapp.SendMessageReques
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return "", fmt.Errorf("parsing response: %w", err)
 	}
+	a.log.Info("async message sent", "message_id", result.Name, "space", req.SpaceID)
 	return result.Name, nil
 }
 
@@ -844,6 +894,8 @@ func (a *Adapter) doPost(ctx context.Context, url string, payload any) ([]byte, 
 		return nil, err
 	}
 
+	a.log.Debug("chat API POST", "url", url, "payload_len", len(data))
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(data)))
 	if err != nil {
 		return nil, err
@@ -852,6 +904,7 @@ func (a *Adapter) doPost(ctx context.Context, url string, payload any) ([]byte, 
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
+		a.log.Error("chat API POST failed", "url", url, "error", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -862,8 +915,10 @@ func (a *Adapter) doPost(ctx context.Context, url string, payload any) ([]byte, 
 	}
 
 	if resp.StatusCode >= 400 {
+		a.log.Error("chat API error response", "url", url, "status", resp.StatusCode, "body", string(body))
 		return nil, fmt.Errorf("chat API error %d: %s", resp.StatusCode, string(body))
 	}
+	a.log.Debug("chat API POST success", "url", url, "status", resp.StatusCode)
 	return body, nil
 }
 
