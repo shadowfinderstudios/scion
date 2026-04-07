@@ -343,7 +343,7 @@ type rawCommonEventObject struct {
 
 type rawTimeZone struct {
 	ID     string `json:"id"`
-	Offset int    `json:"offset"`
+	Offset json.Number `json:"offset"`
 }
 
 type rawFormInputWrapper struct {
